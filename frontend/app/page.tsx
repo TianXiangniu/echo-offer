@@ -1,12 +1,109 @@
+"use client";
+
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+
+import { createProfile, createSession, ProjectInput } from "@/lib/api";
+
+const emptyProject: ProjectInput = {
+  project_name: "",
+  background_goal: "",
+  tech_stack: "",
+  responsibilities: "",
+  core_solution: "",
+  engineering_challenges: "",
+  failure_improvements: "",
+  quantified_results: "",
+};
+
+const fields: Array<{ key: keyof ProjectInput; label: string; hint: string }> = [
+  { key: "project_name", label: "项目名称", hint: "例如：企业知识库问答 Agent" },
+  { key: "background_goal", label: "背景与目标", hint: "它解决了什么真实问题？" },
+  { key: "tech_stack", label: "技术栈", hint: "语言、框架、模型、数据库" },
+  { key: "responsibilities", label: "个人职责", hint: "你亲自设计、实现和负责什么？" },
+  { key: "core_solution", label: "核心方案", hint: "链路、关键模块和技术选择" },
+  { key: "engineering_challenges", label: "工程难点", hint: "遇到过哪些约束、故障或权衡？" },
+  { key: "failure_improvements", label: "故障与改进", hint: "一次失败、定位过程和改进动作" },
+  { key: "quantified_results", label: "量化结果", hint: "指标、对照和可复现的结果" },
+];
+
 export default function HomePage() {
+  const router = useRouter();
+  const [resumeText, setResumeText] = useState("");
+  const [project, setProject] = useState<ProjectInput>(emptyProject);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const profile = await createProfile({ resume_text: resumeText, project });
+      const session = await createSession(profile.profile_id);
+      router.push(`/interview/${session.session_id}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "创建面试失败，请稍后重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <main className="min-h-screen bg-ink px-6 py-16 text-paper">
-      <section className="mx-auto max-w-5xl">
-        <p className="mb-4 text-sm uppercase tracking-[0.28em] text-signal">Agent Echo</p>
-        <h1 className="max-w-3xl font-display text-5xl font-semibold leading-tight">
-          把每一次回答，变成下一次更好的准备。
-        </h1>
-      </section>
+    <main className="min-h-screen bg-ink px-5 py-8 text-paper sm:px-10 lg:px-16">
+      <div className="mx-auto max-w-7xl">
+        <header className="flex items-center justify-between border-b border-white/10 pb-6">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-full bg-signal font-display text-xl text-white">E</div>
+            <div>
+              <p className="font-display text-lg">Agent Echo</p>
+              <p className="text-xs tracking-[0.18em] text-white/45">INTERVIEW PREP / ALPHA</p>
+            </div>
+          </div>
+          <p className="hidden text-sm text-white/45 md:block">中文 · Agent 应用工程师 · 1—3 年</p>
+        </header>
+
+        <section className="grid gap-12 pb-20 pt-16 lg:grid-cols-[0.8fr_1.2fr] lg:gap-20 lg:pt-24">
+          <div>
+            <p className="mb-5 text-sm font-semibold uppercase tracking-[0.25em] text-signal">01 / 先把事实说清楚</p>
+            <h1 className="max-w-xl font-display text-5xl font-semibold leading-[1.05] tracking-tight sm:text-7xl">让面试从你的真实项目开始。</h1>
+            <p className="mt-7 max-w-lg text-lg leading-8 text-white/60">Agent Echo 不用模板化简历猜测你做过什么。先确认项目事实，再用 8 道问题看你如何解释方案、边界与工程结果。</p>
+            <div className="mt-10 grid max-w-md grid-cols-3 gap-3 text-center text-xs text-white/50">
+              <div className="border-l border-signal/70 pl-3 text-left"><strong className="block text-2xl text-paper">08</strong>道固定问题</div>
+              <div className="border-l border-ember/70 pl-3 text-left"><strong className="block text-2xl text-paper">03</strong>道锚题</div>
+              <div className="border-l border-white/30 pl-3 text-left"><strong className="block text-2xl text-paper">0—4</strong>级评估</div>
+            </div>
+          </div>
+
+          <form onSubmit={handleSubmit} className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-6 shadow-2xl shadow-black/20 sm:p-8">
+            <div className="mb-8 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-white/40">Profile / Project</p>
+                <h2 className="mt-2 font-display text-2xl">确认你的项目事实</h2>
+              </div>
+              <span className="rounded-full border border-signal/40 px-3 py-1 text-xs text-signal">本地保存</span>
+            </div>
+
+            <label className="block">
+              <span className="mb-2 block text-sm text-white/70">简历文本</span>
+              <textarea required value={resumeText} onChange={(event) => setResumeText(event.target.value)} placeholder="粘贴你的简历文本。它只作为项目上下文草稿，最终以你确认的项目事实为准。" className="min-h-32 w-full resize-y rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-paper outline-none transition placeholder:text-white/25 focus:border-signal/70" />
+            </label>
+
+            <div className="mt-7 grid gap-4 sm:grid-cols-2">
+              {fields.map((field) => (
+                <label key={field.key} className={field.key === "project_name" ? "sm:col-span-2" : ""}>
+                  <span className="mb-2 block text-sm text-white/70">{field.label}</span>
+                  <textarea required rows={field.key === "project_name" ? 1 : 2} value={project[field.key]} onChange={(event) => setProject((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.hint} className="w-full resize-y rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm leading-6 text-paper outline-none transition placeholder:text-white/25 focus:border-signal/70" />
+                </label>
+              ))}
+            </div>
+
+            {error && <p className="mt-5 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</p>}
+            <button type="submit" disabled={busy} className="mt-7 flex w-full items-center justify-between rounded-xl bg-paper px-5 py-4 text-left font-semibold text-ink transition hover:bg-white disabled:cursor-wait disabled:opacity-60"><span>{busy ? "正在保存项目并生成问题…" : "确认项目，开始面试"}</span><span className="text-xl">↗</span></button>
+            <p className="mt-4 text-center text-xs leading-5 text-white/35">回答会先保存到本地数据库，再生成本题评估。</p>
+          </form>
+        </section>
+      </div>
     </main>
   );
 }
