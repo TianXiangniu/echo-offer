@@ -356,7 +356,6 @@ git commit -m "feat: add profile and interview pages"
 - Modify: `frontend/app/interview/[id]/page.tsx` (completion navigation)
 - Modify: `frontend/app/page.tsx` (resume an existing session link if an ID is present in the response)
 - Modify: `README.md`
-- Create: `backend/tests/test_smoke.py`
 
 **Interfaces:**
 - `api.getReport(sessionId: string): Promise<ReportResponse>` calls `GET /api/sessions/{id}/report`.
