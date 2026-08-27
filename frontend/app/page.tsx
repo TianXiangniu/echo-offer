@@ -1,9 +1,9 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { ChangeEvent, FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { createProfile, createSession, ProjectInput } from "@/lib/api";
+import { createProfile, createSession, parseResume, ProjectInput, ResumeParseResponse } from "@/lib/api";
 
 const emptyProject: ProjectInput = {
   project_name: "",
@@ -30,16 +30,48 @@ const fields: Array<{ key: keyof ProjectInput; label: string; hint: string }> = 
 export default function HomePage() {
   const router = useRouter();
   const [resumeText, setResumeText] = useState("");
+  const [resumeId, setResumeId] = useState<string>();
+  const [resumeSource, setResumeSource] = useState<ResumeParseResponse>();
   const [project, setProject] = useState<ProjectInput>(emptyProject);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  async function handleResumeUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (resumeText.trim() && !window.confirm("上传文件会替换当前简历文本，是否继续？")) return;
+
+    setUploading(true);
+    setError("");
+    try {
+      const parsed = await parseResume(file);
+      setResumeId(parsed.resume_id);
+      setResumeSource(parsed);
+      setResumeText(parsed.extracted_text);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "简历解析失败，请改为手动粘贴文本。");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function switchToManualResume() {
+    setResumeId(undefined);
+    setResumeSource(undefined);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const profile = await createProfile({ resume_text: resumeText, project });
+      const profile = await createProfile({
+        resume_text: resumeText,
+        resume_id: resumeId,
+        project,
+      });
       const session = await createSession(profile.profile_id);
       router.push(`/interview/${session.session_id}`);
     } catch (caught) {
@@ -84,6 +116,38 @@ export default function HomePage() {
               <span className="rounded-full border border-signal/40 px-3 py-1 text-xs text-signal">本地保存</span>
             </div>
 
+            <div className="mb-5 rounded-2xl border border-signal/20 bg-signal/[0.04] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-paper">上传简历文件</p>
+                  <p className="mt-1 text-xs leading-5 text-white/45">支持 PDF / DOCX，提取后仍可编辑，扫描件暂不支持。</p>
+                </div>
+                <label className="cursor-pointer rounded-xl border border-signal/40 px-3 py-2 text-xs font-semibold text-signal transition hover:bg-signal/10 focus-within:ring-2 focus-within:ring-signal/60">
+                  <span>{uploading ? "正在解析…" : "选择文件"}</span>
+                  <input
+                    type="file"
+                    accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={handleResumeUpload}
+                    disabled={uploading || busy}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
+              {uploading && <p className="mt-3 text-xs text-signal">正在读取文本，请稍候…</p>}
+              {resumeSource && !uploading && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3 text-xs">
+                  <p className="text-white/65">
+                    <span className="mr-2 rounded-full bg-signal/15 px-2 py-1 font-semibold text-signal">{resumeSource.source_type.toUpperCase()}</span>
+                    {resumeSource.original_filename} · {resumeSource.unit_count}{resumeSource.source_type === "pdf" ? " 页" : " 个文本块"} · {resumeSource.character_count} 字符
+                  </p>
+                  <button type="button" onClick={switchToManualResume} className="text-white/45 underline decoration-white/20 underline-offset-4 transition hover:text-paper">
+                    改为手动编辑
+                  </button>
+                </div>
+              )}
+              {resumeSource?.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-amber-200">{warning}</p>)}
+            </div>
+
             <label className="block">
               <span className="mb-2 block text-sm text-white/70">简历文本</span>
               <textarea required value={resumeText} onChange={(event) => setResumeText(event.target.value)} placeholder="粘贴你的简历文本。它只作为项目上下文草稿，最终以你确认的项目事实为准。" className="min-h-32 w-full resize-y rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-paper outline-none transition placeholder:text-white/25 focus:border-signal/70" />
@@ -99,7 +163,7 @@ export default function HomePage() {
             </div>
 
             {error && <p className="mt-5 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</p>}
-            <button type="submit" disabled={busy} className="mt-7 flex w-full items-center justify-between rounded-xl bg-paper px-5 py-4 text-left font-semibold text-ink transition hover:bg-white disabled:cursor-wait disabled:opacity-60"><span>{busy ? "正在保存项目并生成问题…" : "确认项目，开始面试"}</span><span className="text-xl">↗</span></button>
+            <button type="submit" disabled={busy || uploading} className="mt-7 flex w-full items-center justify-between rounded-xl bg-paper px-5 py-4 text-left font-semibold text-ink transition hover:bg-white disabled:cursor-wait disabled:opacity-60"><span>{busy ? "正在保存项目并生成问题…" : "确认项目，开始面试"}</span><span className="text-xl">↗</span></button>
             <p className="mt-4 text-center text-xs leading-5 text-white/35">回答会先保存到本地数据库，再生成本题评估。</p>
           </form>
         </section>

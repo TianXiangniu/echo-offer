@@ -73,9 +73,13 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
+    const headers = new Headers(init?.headers);
+    if (typeof init?.body === "string") {
+      headers.set("Content-Type", "application/json");
+    }
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      headers,
     });
   } catch {
     throw new ApiError(0, "暂时无法连接面试服务，请确认后端运行在 http://localhost:8000。");
@@ -88,7 +92,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function createProfile(input: { resume_text: string; project: ProjectInput }) {
+export type ResumeParseResponse = {
+  resume_id: string;
+  source_type: "pdf" | "docx";
+  original_filename: string;
+  unit_count: number;
+  character_count: number;
+  extracted_text: string;
+  warnings: string[];
+};
+
+export function parseResume(file: File) {
+  const body = new FormData();
+  body.append("file", file);
+  return request<ResumeParseResponse>("/api/resumes/parse", {
+    method: "POST",
+    body,
+  });
+}
+
+export function createProfile(input: { resume_text: string; resume_id?: string; project: ProjectInput }) {
   return request<ProfileResponse>("/api/profile", { method: "POST", body: JSON.stringify(input) });
 }
 
