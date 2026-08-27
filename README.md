@@ -8,12 +8,24 @@ Agent 应用工程师 AI 模拟面试平台的本地垂直切片。
 
 - `backend/`：FastAPI、SQLAlchemy、SQLite API。
 - `frontend/`：Next.js 面试界面。
-- `data/`：本地 SQLite 数据库目录。
+- `data/`：本地 SQLite 数据库和上传文件目录。
 - `docs/superpowers/specs/`：已确认的垂直切片设计。
 
 ## 当前范围
 
-题目固定为项目深挖 3 题、Agent 基础 3 题、工程故障排查 2 题；评估使用无需 API Key 的本地规则 Provider。PDF、DeepSeek、LangGraph、训练复盘和延迟验证暂不包含在本切片中。
+题目固定为项目深挖 3 题、Agent 基础 3 题、工程故障排查 2 题；评估使用无需 API Key 的本地规则 Provider。简历支持文本粘贴、文本型 PDF 和 DOCX 解析；扫描 PDF、图片 OCR、DeepSeek、LangGraph、训练复盘和延迟验证暂不包含在本切片中。
+
+## 简历文件解析
+
+首页支持上传 `.pdf` 和 `.docx` 文件，单文件上限为 10 MiB。文件会在本地解析为可编辑的简历文本，用户修改文本并确认项目事实后，才会创建面试会话。
+
+支持的流程：
+
+```text
+上传 PDF / DOCX → 提取文本 → 编辑文本 → 确认项目 → 开始面试
+```
+
+上传文件保存在 `data/uploads/`，该目录已加入 Git 忽略规则。扫描型 PDF、图片简历和只有图片的 DOCX 暂不支持 OCR，请改用文本粘贴或手动录入。
 
 ## 本地运行
 
