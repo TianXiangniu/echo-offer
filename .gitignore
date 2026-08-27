@@ -5,8 +5,8 @@ __pycache__/
 backend/.venv/
 data/app.db
 data/*.db-*
+data/uploads/
 node_modules/
 frontend/.next/
 frontend/out/
 frontend/.env.local
-
