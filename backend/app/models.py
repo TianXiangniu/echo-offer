@@ -29,6 +29,23 @@ class Resume(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ResumeSource(Base):
+    __tablename__ = "resume_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    resume_id: Mapped[str] = mapped_column(ForeignKey("resumes.id"), index=True)
+    source_type: Mapped[str] = mapped_column(String(20))
+    original_filename: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(260))
+    file_size: Mapped[int] = mapped_column(Integer)
+    file_hash: Mapped[str] = mapped_column(String(64))
+    unit_count: Mapped[int] = mapped_column(Integer)
+    extracted_text: Mapped[str] = mapped_column(Text)
+    parse_status: Mapped[str] = mapped_column(String(20), default="parsed")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class ResumeProject(Base):
     __tablename__ = "resume_projects"
 

@@ -16,7 +16,18 @@ class ProjectInput(BaseModel):
 
 class ProfileCreate(BaseModel):
     resume_text: str = Field(min_length=1)
+    resume_id: str | None = None
     project: ProjectInput
+
+
+class ResumeParseResponse(BaseModel):
+    resume_id: str
+    source_type: Literal["pdf", "docx"]
+    original_filename: str
+    unit_count: int
+    character_count: int
+    extracted_text: str
+    warnings: list[str]
 
 
 class ProfileResponse(BaseModel):

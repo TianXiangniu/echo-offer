@@ -1,5 +1,6 @@
 import hashlib
 import json
+from pathlib import Path
 from dataclasses import asdict
 from uuid import uuid4
 
@@ -14,11 +15,19 @@ from .models import (
     InterviewSession,
     InterviewTarget,
     Resume,
+    ResumeSource,
     ResumeProject,
     User,
 )
 from .providers import AssessmentProvider
 from .question_bank import QuestionSpec
+from .resume_files import (
+    StoredResumeFile,
+    ValidatedResumeFile,
+    store_resume_file,
+    validate_resume_upload,
+)
+from .resume_parsers import ResumeParserRegistry
 from .schemas import AnswerSubmission, ProfileCreate
 
 
@@ -32,6 +41,14 @@ class ConflictError(Exception):
 
 class InvalidAnswerError(Exception):
     pass
+
+
+class ResumeNotFoundError(Exception):
+    code = "resume_not_found"
+
+
+class ResumeOwnerConflictError(Exception):
+    code = "resume_owner_conflict"
 
 
 def _hash_payload(payload: dict) -> str:
@@ -63,14 +80,23 @@ def create_profile(db: Session, payload: ProfileCreate) -> dict:
         db.flush()
 
     resume_text_hash = hashlib.sha256(payload.resume_text.encode("utf-8")).hexdigest()
-    resume = Resume(
-        id=str(uuid4()),
-        user_id=user.id,
-        resume_text=payload.resume_text,
-        text_hash=resume_text_hash,
-    )
-    db.add(resume)
-    db.flush()
+    if payload.resume_id is None:
+        resume = Resume(
+            id=str(uuid4()),
+            user_id=user.id,
+            resume_text=payload.resume_text,
+            text_hash=resume_text_hash,
+        )
+        db.add(resume)
+        db.flush()
+    else:
+        resume = db.get(Resume, payload.resume_id)
+        if resume is None:
+            raise ResumeNotFoundError("resume not found")
+        if resume.user_id != user.id:
+            raise ResumeOwnerConflictError("resume does not belong to the current user")
+        resume.resume_text = payload.resume_text
+        resume.text_hash = resume_text_hash
 
     max_version = db.scalar(
         select(func.max(ResumeProject.project_version)).join(Resume).where(Resume.user_id == user.id)
@@ -103,6 +129,70 @@ def create_profile(db: Session, payload: ProfileCreate) -> dict:
         "direction": target.direction,
         "level": target.level,
         "language": target.language,
+    }
+
+
+def parse_and_store_resume(
+    db: Session,
+    *,
+    file_bytes: bytes,
+    original_filename: str,
+    content_type: str | None,
+    upload_root: Path,
+) -> dict:
+    validated: ValidatedResumeFile = validate_resume_upload(
+        original_filename, content_type, file_bytes
+    )
+    parser = ResumeParserRegistry.for_file(original_filename, content_type)
+    parsed = parser.parse(file_bytes, original_filename, content_type)
+
+    user = db.get(User, LOCAL_USER_ID)
+    if user is None:
+        user = User(id=LOCAL_USER_ID)
+        db.add(user)
+        db.flush()
+
+    stored: StoredResumeFile | None = None
+    try:
+        stored = store_resume_file(file_bytes, validated.source_type, upload_root)
+        resume = Resume(
+            id=str(uuid4()),
+            user_id=user.id,
+            resume_text=parsed.text,
+            text_hash=hashlib.sha256(parsed.text.encode("utf-8")).hexdigest(),
+        )
+        db.add(resume)
+        db.flush()
+        db.add(
+            ResumeSource(
+                id=str(uuid4()),
+                resume_id=resume.id,
+                source_type=parsed.source_type,
+                original_filename=validated.original_filename,
+                stored_path=str(stored.relative_path),
+                file_size=len(file_bytes),
+                file_hash=stored.file_hash,
+                unit_count=parsed.unit_count,
+                extracted_text=parsed.text,
+                parse_status="parsed",
+                warnings_json=json.dumps(parsed.warnings, ensure_ascii=False),
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        if stored is not None:
+            (upload_root / stored.relative_path).unlink(missing_ok=True)
+        raise
+
+    return {
+        "resume_id": resume.id,
+        "source_type": parsed.source_type,
+        "original_filename": validated.original_filename,
+        "unit_count": parsed.unit_count,
+        "character_count": len(parsed.text),
+        "extracted_text": parsed.text,
+        "warnings": parsed.warnings,
     }
 
 
