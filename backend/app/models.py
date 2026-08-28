@@ -59,7 +59,39 @@ class ResumeProject(Base):
     engineering_challenges: Mapped[str] = mapped_column(Text)
     failure_improvements: Mapped[str] = mapped_column(Text)
     quantified_results: Mapped[str] = mapped_column(Text)
+    analysis_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     project_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ResumeProjectAnalysis(Base):
+    __tablename__ = "resume_project_analyses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    resume_id: Mapped[str] = mapped_column(ForeignKey("resumes.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    resume_text_hash: Mapped[str] = mapped_column(String(64))
+    model_name: Mapped[str] = mapped_column(String(120))
+    provider_name: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(20))
+    analysis_json: Mapped[str] = mapped_column(Text, default="{}")
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class ResumeProjectQuestion(Base):
+    __tablename__ = "resume_project_questions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    resume_project_id: Mapped[str] = mapped_column(ForeignKey("resume_projects.id"), index=True)
+    order: Mapped[int] = mapped_column(Integer)
+    prompt: Mapped[str] = mapped_column(Text)
+    knowledge_point_id: Mapped[str] = mapped_column(String(120))
+    signals_json: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 

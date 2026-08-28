@@ -7,7 +7,12 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .config import LOCAL_USER_ID, WORKFLOW_VERSION
+from .config import (
+    LOCAL_USER_ID,
+    MAX_ANALYSIS_RESUME_CHARS,
+    SILICONFLOW_MODEL,
+    WORKFLOW_VERSION,
+)
 from .models import (
     AnswerAttempt,
     AssessmentObservation,
@@ -17,9 +22,12 @@ from .models import (
     Resume,
     ResumeSource,
     ResumeProject,
+    ResumeProjectAnalysis,
+    ResumeProjectQuestion,
     User,
 )
-from .providers import AssessmentProvider
+from .project_analysis import validate_analysis_evidence
+from .providers import AssessmentProvider, ProjectAnalysisProvider, ProjectAnalysisProviderError
 from .question_bank import QuestionSpec
 from .resume_files import (
     StoredResumeFile,
@@ -49,6 +57,13 @@ class ResumeNotFoundError(Exception):
 
 class ResumeOwnerConflictError(Exception):
     code = "resume_owner_conflict"
+
+
+class ProjectAnalysisError(Exception):
+    def __init__(self, code: str, message: str, status_code: int = 502):
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
 
 
 def _hash_payload(payload: dict) -> str:
@@ -193,6 +208,61 @@ def parse_and_store_resume(
         "character_count": len(parsed.text),
         "extracted_text": parsed.text,
         "warnings": parsed.warnings,
+    }
+
+
+def analyze_resume_project(
+    db: Session,
+    provider: ProjectAnalysisProvider,
+    resume_id: str,
+    resume_text: str,
+) -> dict:
+    resume = db.get(Resume, resume_id)
+    if resume is None:
+        raise ResumeNotFoundError("resume not found")
+    if resume.user_id != LOCAL_USER_ID:
+        raise ResumeOwnerConflictError("resume does not belong to the current user")
+    if not resume_text.strip():
+        raise ProjectAnalysisError("resume_text_empty", "简历文本不能为空", 422)
+    if len(resume_text) > MAX_ANALYSIS_RESUME_CHARS:
+        raise ProjectAnalysisError("resume_text_too_long", "简历文本过长", 413)
+
+    text_hash = hashlib.sha256(resume_text.encode("utf-8")).hexdigest()
+    analysis = ResumeProjectAnalysis(
+        id=str(uuid4()),
+        resume_id=resume.id,
+        user_id=resume.user_id,
+        resume_text_hash=text_hash,
+        model_name=SILICONFLOW_MODEL,
+        provider_name="siliconflow",
+        status="draft",
+        analysis_json="{}",
+    )
+    db.add(analysis)
+    try:
+        result = provider.analyze(resume_text)
+        result = validate_analysis_evidence(result, resume_text)
+        analysis.analysis_json = json.dumps(
+            result.model_dump(), ensure_ascii=False, sort_keys=True
+        )
+        db.commit()
+    except ProjectAnalysisProviderError as exc:
+        analysis.status = "failed"
+        analysis.error_code = exc.code
+        db.commit()
+        raise
+    except ValueError as exc:
+        analysis.status = "failed"
+        analysis.error_code = "invalid_model_response"
+        db.commit()
+        raise ProjectAnalysisError("invalid_model_response", "模型返回内容无法确认", 502) from exc
+
+    return {
+        "analysis_id": analysis.id,
+        "resume_id": resume.id,
+        "resume_text_hash": text_hash,
+        "status": analysis.status,
+        **result.model_dump(),
     }
 
 

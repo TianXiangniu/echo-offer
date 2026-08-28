@@ -5,15 +5,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from .config import DEFAULT_DATABASE_URL, DEFAULT_UPLOAD_ROOT, MAX_RESUME_UPLOAD_BYTES, WORKFLOW_VERSION
+from .config import (
+    ANALYSIS_TIMEOUT_SECONDS,
+    DEFAULT_DATABASE_URL,
+    DEFAULT_UPLOAD_ROOT,
+    MAX_RESUME_UPLOAD_BYTES,
+    SILICONFLOW_API_KEY,
+    SILICONFLOW_BASE_URL,
+    SILICONFLOW_MODEL,
+    WORKFLOW_VERSION,
+)
 from .database import create_database, get_db
-from .providers import RuleBasedAssessmentProvider
+from .providers import (
+    ProjectAnalysisProvider,
+    ProjectAnalysisProviderError,
+    RuleBasedAssessmentProvider,
+    SiliconFlowProjectAnalysisProvider,
+)
 from .question_bank import build_question_specs
 from .resume_files import ResumeUploadError, read_upload_bytes
 from .resume_parsers import ResumeParserError
 from .schemas import (
     AnswerResponse,
     AnswerSubmission,
+    AgentProjectAnalysisRequest,
+    AgentProjectAnalysisResponseEnvelope,
     ProfileCreate,
     ProfileResponse,
     ResumeParseResponse,
@@ -28,6 +44,8 @@ from .services import (
     NotFoundError,
     ResumeNotFoundError,
     ResumeOwnerConflictError,
+    ProjectAnalysisError,
+    analyze_resume_project,
     create_profile,
     create_session,
     get_report,
@@ -40,12 +58,19 @@ from .services import (
 def create_app(
     database_url: str | None = None,
     upload_root: Path | None = None,
+    project_analysis_provider: ProjectAnalysisProvider | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Agent Echo API", version=WORKFLOW_VERSION)
     _, session_factory = create_database(database_url or DEFAULT_DATABASE_URL)
     app.state.session_factory = session_factory
     app.state.upload_root = upload_root or DEFAULT_UPLOAD_ROOT
     app.state.assessment_provider = RuleBasedAssessmentProvider()
+    app.state.project_analysis_provider = project_analysis_provider or SiliconFlowProjectAnalysisProvider(
+        api_key=SILICONFLOW_API_KEY,
+        model=SILICONFLOW_MODEL,
+        base_url=SILICONFLOW_BASE_URL,
+        timeout_seconds=ANALYSIS_TIMEOUT_SECONDS,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:3000"],
@@ -94,6 +119,29 @@ def create_app(
             content={"detail": str(exc), "code": exc.code},
         )
 
+    @app.exception_handler(ProjectAnalysisError)
+    async def handle_project_analysis_error(_, exc: ProjectAnalysisError):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": str(exc), "code": exc.code},
+        )
+
+    @app.exception_handler(ProjectAnalysisProviderError)
+    async def handle_project_analysis_provider_error(_, exc: ProjectAnalysisProviderError):
+        status_by_code = {
+            "provider_not_configured": 503,
+            "provider_timeout": 504,
+            "provider_rate_limited": 429,
+            "provider_unavailable": 503,
+            "provider_auth_failed": 502,
+            "provider_connection_failed": 502,
+            "invalid_model_response": 502,
+        }
+        return JSONResponse(
+            status_code=status_by_code.get(exc.code, 502),
+            content={"detail": str(exc), "code": exc.code},
+        )
+
     @app.get("/health")
     def health():
         return {"status": "ok", "workflow_version": WORKFLOW_VERSION}
@@ -111,6 +159,22 @@ def create_app(
             original_filename=file.filename or "",
             content_type=file.content_type,
             upload_root=app.state.upload_root,
+        )
+
+    @app.post(
+        "/api/resumes/{resume_id}/agent-project-analysis",
+        response_model=AgentProjectAnalysisResponseEnvelope,
+    )
+    def analyze_project(
+        resume_id: str,
+        payload: AgentProjectAnalysisRequest,
+        db: Session = Depends(get_db),
+    ):
+        return analyze_resume_project(
+            db,
+            app.state.project_analysis_provider,
+            resume_id,
+            payload.resume_text,
         )
 
     @app.post("/api/sessions", response_model=SessionCreateResponse)

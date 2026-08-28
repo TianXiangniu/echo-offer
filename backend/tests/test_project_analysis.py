@@ -1,12 +1,26 @@
 import json
 
 import httpx
+import pymupdf
 import pytest
 from pydantic import ValidationError
 
 from app.project_analysis import clean_model_json, validate_analysis_evidence
 from app.providers import ProjectAnalysisProviderError, SiliconFlowProjectAnalysisProvider
 from app.schemas import AgentProjectAnalysisResponse
+
+
+def make_pdf_bytes():
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_textbox(
+        pymupdf.Rect(72, 72, 520, 180),
+        "Project experience: built a retrieval augmented generation agent.",
+    )
+    try:
+        return document.tobytes()
+    finally:
+        document.close()
 
 
 def valid_analysis_payload():
@@ -129,3 +143,70 @@ def test_provider_maps_rate_limit_to_stable_error():
         provider.analyze("简历文本")
 
     assert error.value.code == "provider_rate_limited"
+
+
+class FakeProjectAnalysisProvider:
+    def __init__(self, result=None, error=None):
+        self.result = result
+        self.error = error
+        self.calls = 0
+
+    def analyze(self, resume_text):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def test_analysis_endpoint_saves_draft_and_calls_provider_once(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    provider = FakeProjectAnalysisProvider(
+        result=AgentProjectAnalysisResponse.model_validate(valid_analysis_payload())
+    )
+    client.app.state.project_analysis_provider = provider
+
+    response = client.post(
+        f"/api/resumes/{parsed['resume_id']}/agent-project-analysis",
+        json={"resume_text": "负责检索链路和线上监控"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "draft"
+    assert len(response.json()["questions"]) == 3
+    assert provider.calls == 1
+
+
+def test_missing_resume_does_not_call_provider(client):
+    provider = FakeProjectAnalysisProvider(
+        result=AgentProjectAnalysisResponse.model_validate(valid_analysis_payload())
+    )
+    client.app.state.project_analysis_provider = provider
+
+    response = client.post(
+        "/api/resumes/not-found/agent-project-analysis",
+        json={"resume_text": "简历文本"},
+    )
+
+    assert response.status_code == 404
+    assert provider.calls == 0
+
+
+def test_provider_failure_returns_stable_error(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    client.app.state.project_analysis_provider = FakeProjectAnalysisProvider(
+        error=ProjectAnalysisProviderError("provider_timeout", "模型请求超时")
+    )
+
+    response = client.post(
+        f"/api/resumes/{parsed['resume_id']}/agent-project-analysis",
+        json={"resume_text": "简历文本"},
+    )
+
+    assert response.status_code == 504
+    assert response.json()["code"] == "provider_timeout"
