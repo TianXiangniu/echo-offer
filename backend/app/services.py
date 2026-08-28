@@ -113,6 +113,20 @@ def create_profile(db: Session, payload: ProfileCreate) -> dict:
         resume.resume_text = payload.resume_text
         resume.text_hash = resume_text_hash
 
+    analysis = None
+    if payload.analysis_id is not None:
+        analysis = db.get(ResumeProjectAnalysis, payload.analysis_id)
+        if analysis is None:
+            raise NotFoundError("project analysis not found")
+        if analysis.user_id != user.id or analysis.resume_id != resume.id:
+            raise ConflictError("project analysis does not belong to the resume")
+        if analysis.status != "draft":
+            raise ConflictError("project analysis is not a draft")
+        if payload.project_questions is None or len(payload.project_questions) != 3:
+            raise ConflictError("exactly three project questions are required")
+    elif payload.project_questions is not None:
+        raise ConflictError("project_questions require analysis_id")
+
     max_version = db.scalar(
         select(func.max(ResumeProject.project_version)).join(Resume).where(Resume.user_id == user.id)
     )
@@ -120,9 +134,33 @@ def create_profile(db: Session, payload: ProfileCreate) -> dict:
         id=str(uuid4()),
         resume_id=resume.id,
         project_version=(max_version or 0) + 1,
+        analysis_id=analysis.id if analysis else None,
         **payload.project.model_dump(),
     )
     db.add(project)
+    db.flush()
+
+    if analysis is not None:
+        original_questions = json.loads(analysis.analysis_json).get("questions", [])
+        for index, question in enumerate(payload.project_questions or [], start=1):
+            source = (
+                "model"
+                if index <= len(original_questions)
+                and question.model_dump() == original_questions[index - 1]
+                else "user_edited"
+            )
+            db.add(
+                ResumeProjectQuestion(
+                    id=str(uuid4()),
+                    resume_project_id=project.id,
+                    order=index,
+                    prompt=question.prompt,
+                    knowledge_point_id=question.knowledge_point_id,
+                    signals_json=json.dumps(question.signals, ensure_ascii=False),
+                    source=source,
+                )
+            )
+        analysis.status = "confirmed"
 
     target = InterviewTarget(
         id=str(uuid4()),

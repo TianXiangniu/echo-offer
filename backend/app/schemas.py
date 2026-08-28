@@ -69,9 +69,11 @@ class AgentProjectAnalysisResponseEnvelope(AgentProjectAnalysisResponse):
 
 
 class ProfileCreate(BaseModel):
-    resume_text: str = Field(min_length=1)
+    resume_text: str = Field(min_length=1, max_length=100_000)
     resume_id: str | None = None
+    analysis_id: str | None = None
     project: ProjectInput
+    project_questions: list[ProjectQuestionInput] | None = None
 
 
 class ResumeParseResponse(BaseModel):

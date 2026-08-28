@@ -4,7 +4,9 @@ import httpx
 import pymupdf
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import select
 
+from app.models import ResumeProject, ResumeProjectAnalysis, ResumeProjectQuestion
 from app.project_analysis import clean_model_json, validate_analysis_evidence
 from app.providers import ProjectAnalysisProviderError, SiliconFlowProjectAnalysisProvider
 from app.schemas import AgentProjectAnalysisResponse
@@ -210,3 +212,46 @@ def test_provider_failure_returns_stable_error(client):
 
     assert response.status_code == 504
     assert response.json()["code"] == "provider_timeout"
+
+
+def test_confirmed_analysis_saves_edited_project_and_questions(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    result = AgentProjectAnalysisResponse.model_validate(valid_analysis_payload())
+    client.app.state.project_analysis_provider = FakeProjectAnalysisProvider(result=result)
+
+    analysis = client.post(
+        f"/api/resumes/{parsed['resume_id']}/agent-project-analysis",
+        json={"resume_text": "负责检索链路和线上监控"},
+    ).json()
+    project = result.project.model_dump()
+    questions = [question.model_dump() for question in result.questions]
+    questions[0]["prompt"] = "请详细说明你亲自负责的检索链路。"
+
+    profile = client.post(
+        "/api/profile",
+        json={
+            "resume_id": parsed["resume_id"],
+            "resume_text": "负责检索链路和线上监控；用户确认补充了故障复盘。",
+            "analysis_id": analysis["analysis_id"],
+            "project": project,
+            "project_questions": questions,
+        },
+    )
+
+    assert profile.status_code == 200
+    with client.app.state.session_factory() as db:
+        saved_project = db.get(ResumeProject, profile.json()["profile_id"])
+        saved_questions = list(
+            db.scalars(
+                select(ResumeProjectQuestion)
+                .where(ResumeProjectQuestion.resume_project_id == saved_project.id)
+                .order_by(ResumeProjectQuestion.order)
+            )
+        )
+        saved_analysis = db.get(ResumeProjectAnalysis, analysis["analysis_id"])
+        assert saved_project.analysis_id == analysis["analysis_id"]
+        assert saved_questions[0].source == "user_edited"
+        assert saved_analysis.status == "confirmed"
