@@ -1,6 +1,11 @@
+import json
+
+import httpx
 import pytest
 from pydantic import ValidationError
 
+from app.project_analysis import clean_model_json, validate_analysis_evidence
+from app.providers import ProjectAnalysisProviderError, SiliconFlowProjectAnalysisProvider
 from app.schemas import AgentProjectAnalysisResponse
 
 
@@ -55,3 +60,72 @@ def test_analysis_response_allows_missing_quantified_result():
 
     assert result.project.quantified_results == ""
     assert result.questions[0].knowledge_point_id.startswith("project.")
+
+
+def test_clean_model_json_removes_markdown_fence():
+    fence = chr(96) * 3
+
+    assert clean_model_json(fence + "json\n{\"ok\": true}\n" + fence) == '{"ok": true}'
+
+
+def test_evidence_must_exist_in_resume_text():
+    result = AgentProjectAnalysisResponse.model_validate(valid_analysis_payload())
+
+    validated = validate_analysis_evidence(
+        result,
+        "负责检索链路和线上监控；项目使用查询改写、混合检索和重排。",
+    )
+
+    assert validated.evidence[0].quote == "负责检索链路和线上监控"
+
+
+def test_siliconflow_provider_reads_content_from_chat_response():
+    requests = []
+
+    def handler(request: httpx.Request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(valid_analysis_payload(), ensure_ascii=False)
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = SiliconFlowProjectAnalysisProvider(
+        api_key="test-only",
+        model="test-model",
+        base_url="https://api.siliconflow.cn/v1",
+        timeout_seconds=5,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    result = provider.analyze("负责检索链路和线上监控")
+
+    assert result.questions[0].knowledge_point_id.startswith("project.")
+    assert requests[0].url.path == "/v1/chat/completions"
+    assert requests[0].headers["authorization"] == "Bearer test-only"
+
+
+def test_provider_maps_rate_limit_to_stable_error():
+    provider = SiliconFlowProjectAnalysisProvider(
+        api_key="test-only",
+        model="test-model",
+        base_url="https://api.siliconflow.cn/v1",
+        timeout_seconds=5,
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(429, json={"message": "limited"})
+            )
+        ),
+    )
+
+    with pytest.raises(ProjectAnalysisProviderError) as error:
+        provider.analyze("简历文本")
+
+    assert error.value.code == "provider_rate_limited"

@@ -2,7 +2,15 @@ from dataclasses import dataclass
 import hashlib
 from typing import Protocol
 
+import httpx
+
+from .project_analysis import (
+    SYSTEM_PROMPT,
+    build_user_prompt,
+    parse_model_analysis,
+)
 from .question_bank import QuestionSpec
+from .schemas import AgentProjectAnalysisResponse
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +29,89 @@ class AssessmentProvider(Protocol):
         self, question: QuestionSpec, answer_text: str, status: str
     ) -> AssessmentResult:
         ...
+
+
+class ProjectAnalysisProvider(Protocol):
+    def analyze(self, resume_text: str) -> AgentProjectAnalysisResponse:
+        ...
+
+
+class ProjectAnalysisProviderError(Exception):
+    def __init__(self, code: str, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+
+
+def map_provider_http_error(status_code: int) -> ProjectAnalysisProviderError:
+    if status_code == 401 or status_code == 403:
+        return ProjectAnalysisProviderError(
+            "provider_auth_failed", "模型服务认证失败", status_code
+        )
+    if status_code == 429:
+        return ProjectAnalysisProviderError(
+            "provider_rate_limited", "模型服务请求过于频繁，请稍后重试", status_code
+        )
+    if status_code in {502, 503, 504}:
+        return ProjectAnalysisProviderError(
+            "provider_unavailable", "模型服务暂时不可用，请稍后重试", status_code
+        )
+    return ProjectAnalysisProviderError(
+        "provider_http_error", "模型服务请求失败，请稍后重试", status_code
+    )
+
+
+class SiliconFlowProjectAnalysisProvider:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str,
+        timeout_seconds: float,
+        client: httpx.Client | None = None,
+    ):
+        self._api_key = api_key
+        self._model = model
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout_seconds
+        self._client = client
+
+    def _request(self, payload: dict) -> httpx.Response:
+        url = f"{self._base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        if self._client is not None:
+            return self._client.post(url, headers=headers, json=payload, timeout=self._timeout)
+        with httpx.Client(timeout=self._timeout) as client:
+            return client.post(url, headers=headers, json=payload)
+
+    def analyze(self, resume_text: str) -> AgentProjectAnalysisResponse:
+        if not self._api_key:
+            raise ProjectAnalysisProviderError("provider_not_configured", "模型服务尚未配置")
+        payload = {
+            "model": self._model,
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": build_user_prompt(resume_text)},
+            ],
+        }
+        try:
+            response = self._request(payload)
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            return parse_model_analysis(content)
+        except httpx.TimeoutException as exc:
+            raise ProjectAnalysisProviderError("provider_timeout", "模型请求超时") from exc
+        except httpx.HTTPStatusError as exc:
+            raise map_provider_http_error(exc.response.status_code) from exc
+        except httpx.RequestError as exc:
+            raise ProjectAnalysisProviderError("provider_connection_failed", "无法连接模型服务") from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProjectAnalysisProviderError("invalid_model_response", "模型返回格式异常") from exc
 
 
 class RuleBasedAssessmentProvider:
