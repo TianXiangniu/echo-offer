@@ -3,7 +3,16 @@
 import { ChangeEvent, FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { createProfile, createSession, parseResume, ProjectInput, ResumeParseResponse } from "@/lib/api";
+import {
+  AgentProjectAnalysis,
+  analyzeAgentProject,
+  createProfile,
+  createSession,
+  parseResume,
+  ProjectInput,
+  ProjectQuestionInput,
+  ResumeParseResponse,
+} from "@/lib/api";
 
 const emptyProject: ProjectInput = {
   project_name: "",
@@ -33,9 +42,19 @@ export default function HomePage() {
   const [resumeId, setResumeId] = useState<string>();
   const [resumeSource, setResumeSource] = useState<ResumeParseResponse>();
   const [project, setProject] = useState<ProjectInput>(emptyProject);
+  const [analysisId, setAnalysisId] = useState<string>();
+  const [analysisResult, setAnalysisResult] = useState<AgentProjectAnalysis>();
+  const [projectQuestions, setProjectQuestions] = useState<ProjectQuestionInput[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  function clearAnalysis() {
+    setAnalysisId(undefined);
+    setAnalysisResult(undefined);
+    setProjectQuestions([]);
+  }
 
   async function handleResumeUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -50,6 +69,8 @@ export default function HomePage() {
       setResumeId(parsed.resume_id);
       setResumeSource(parsed);
       setResumeText(parsed.extracted_text);
+      setProject(emptyProject);
+      clearAnalysis();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "简历解析失败，请改为手动粘贴文本。");
     } finally {
@@ -60,6 +81,40 @@ export default function HomePage() {
   function switchToManualResume() {
     setResumeId(undefined);
     setResumeSource(undefined);
+    clearAnalysis();
+  }
+
+  function handleResumeTextChange(value: string) {
+    setResumeText(value);
+    if (analysisResult) clearAnalysis();
+  }
+
+  async function handleAnalyze() {
+    if (!resumeId || !resumeText.trim()) {
+      setError("请先上传 PDF 或 DOCX 简历，再进行 AI 分析。");
+      return;
+    }
+    if (!window.confirm("完整简历文本将发送给硅基流动用于项目分析，是否继续？")) return;
+
+    setAnalyzing(true);
+    setError("");
+    try {
+      const result = await analyzeAgentProject(resumeId, resumeText);
+      setAnalysisId(result.analysis_id);
+      setAnalysisResult(result);
+      setProject(result.project);
+      setProjectQuestions(result.questions);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "AI 分析失败，请稍后重试。");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  function updateProjectQuestion(index: number, patch: Partial<ProjectQuestionInput>) {
+    setProjectQuestions((current) => current.map((question, questionIndex) => (
+      questionIndex === index ? { ...question, ...patch } : question
+    )));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -70,7 +125,9 @@ export default function HomePage() {
       const profile = await createProfile({
         resume_text: resumeText,
         resume_id: resumeId,
+        analysis_id: analysisId,
         project,
+        project_questions: analysisResult ? projectQuestions : undefined,
       });
       const session = await createSession(profile.profile_id);
       router.push(`/interview/${session.session_id}`);
@@ -150,20 +207,94 @@ export default function HomePage() {
 
             <label className="block">
               <span className="mb-2 block text-sm text-white/70">简历文本</span>
-              <textarea required value={resumeText} onChange={(event) => setResumeText(event.target.value)} placeholder="粘贴你的简历文本。它只作为项目上下文草稿，最终以你确认的项目事实为准。" className="min-h-32 w-full resize-y rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-paper outline-none transition placeholder:text-white/25 focus:border-signal/70" />
+              <textarea required value={resumeText} onChange={(event) => handleResumeTextChange(event.target.value)} placeholder="粘贴你的简历文本。它只作为项目上下文草稿，最终以你确认的项目事实为准。" className="min-h-32 w-full resize-y rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-paper outline-none transition placeholder:text-white/25 focus:border-signal/70" />
             </label>
+
+            <div className="mt-5 rounded-2xl border border-ember/25 bg-ember/[0.05] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-paper">让 AI 识别 Agent 项目</p>
+                  <p className="mt-1 text-xs leading-5 text-white/45">点击分析后，完整简历文本将发送给硅基流动。</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAnalyze}
+                  disabled={!resumeId || !resumeText.trim() || analyzing || busy || uploading}
+                  className="rounded-xl bg-ember px-3 py-2 text-xs font-semibold text-white transition hover:bg-ember/90 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {analyzing ? "分析中…" : analysisResult ? "重新分析" : "使用 AI 分析"}
+                </button>
+              </div>
+              {!resumeId && <p className="mt-3 text-xs text-amber-200/75">请先上传 PDF 或 DOCX，解析完成后才能分析。</p>}
+            </div>
+
+            {analysisResult && (
+              <section className="mt-5 rounded-2xl border border-signal/25 bg-signal/[0.04] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-signal">AI Analysis Draft</p>
+                    <h3 className="mt-1 text-lg font-semibold text-paper">已识别：{project.project_name || "未命名项目"}</h3>
+                  </div>
+                  <span className="rounded-full border border-signal/35 px-2.5 py-1 text-xs text-signal">置信度 {Math.round(analysisResult.confidence * 100)}%</span>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-white/65">{analysisResult.selection_reason}</p>
+                {analysisResult.missing_information.length > 0 && (
+                  <div className="mt-3 rounded-xl border border-amber-200/20 bg-amber-200/[0.05] p-3 text-xs leading-5 text-amber-100">
+                    <span className="font-semibold">待补充：</span>{analysisResult.missing_information.join("；")}
+                  </div>
+                )}
+                <div className="mt-4 space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">个性化项目题</p>
+                  {projectQuestions.map((question, index) => (
+                    <div key={index} className="rounded-xl border border-white/10 bg-black/15 p-3">
+                      <label className="block">
+                        <span className="mb-1.5 block text-xs text-white/50">项目题 {index + 1}</span>
+                        <textarea
+                          required
+                          value={question.prompt}
+                          onChange={(event) => updateProjectQuestion(index, { prompt: event.target.value })}
+                          className="min-h-20 w-full resize-y rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm leading-6 text-paper outline-none focus:border-signal/70"
+                        />
+                      </label>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <input
+                          value={question.knowledge_point_id}
+                          onChange={(event) => updateProjectQuestion(index, { knowledge_point_id: event.target.value })}
+                          placeholder="知识点 ID"
+                          className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-paper outline-none focus:border-signal/70"
+                        />
+                        <input
+                          value={question.signals.join("、")}
+                          onChange={(event) => updateProjectQuestion(index, { signals: event.target.value.split(/[、,，]/).map((signal) => signal.trim()).filter(Boolean) })}
+                          placeholder="答题信号，用顿号分隔"
+                          className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-paper outline-none focus:border-signal/70"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {analysisResult.evidence.length > 0 && (
+                  <details className="mt-4 text-xs text-white/45">
+                    <summary className="cursor-pointer text-white/60">查看模型引用证据</summary>
+                    <ul className="mt-2 space-y-1.5 pl-4">
+                      {analysisResult.evidence.map((item, index) => <li key={index}><span className="text-signal">{item.field}</span>：{item.quote}</li>)}
+                    </ul>
+                  </details>
+                )}
+              </section>
+            )}
 
             <div className="mt-7 grid gap-4 sm:grid-cols-2">
               {fields.map((field) => (
                 <label key={field.key} className={field.key === "project_name" ? "sm:col-span-2" : ""}>
                   <span className="mb-2 block text-sm text-white/70">{field.label}</span>
-                  <textarea required rows={field.key === "project_name" ? 1 : 2} value={project[field.key]} onChange={(event) => setProject((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.hint} className="w-full resize-y rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm leading-6 text-paper outline-none transition placeholder:text-white/25 focus:border-signal/70" />
+                  <textarea required={field.key !== "quantified_results"} rows={field.key === "project_name" ? 1 : 2} value={project[field.key]} onChange={(event) => setProject((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.hint} className="w-full resize-y rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm leading-6 text-paper outline-none transition placeholder:text-white/25 focus:border-signal/70" />
                 </label>
               ))}
             </div>
 
             {error && <p className="mt-5 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</p>}
-            <button type="submit" disabled={busy || uploading} className="mt-7 flex w-full items-center justify-between rounded-xl bg-paper px-5 py-4 text-left font-semibold text-ink transition hover:bg-white disabled:cursor-wait disabled:opacity-60"><span>{busy ? "正在保存项目并生成问题…" : "确认项目，开始面试"}</span><span className="text-xl">↗</span></button>
+            <button type="submit" disabled={busy || uploading || analyzing} className="mt-7 flex w-full items-center justify-between rounded-xl bg-paper px-5 py-4 text-left font-semibold text-ink transition hover:bg-white disabled:cursor-wait disabled:opacity-60"><span>{busy ? "正在保存项目并生成问题…" : "确认项目，开始面试"}</span><span className="text-xl">↗</span></button>
             <p className="mt-4 text-center text-xs leading-5 text-white/35">回答会先保存到本地数据库，再生成本题评估。</p>
           </form>
         </section>

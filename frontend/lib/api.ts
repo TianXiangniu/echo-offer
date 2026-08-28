@@ -21,6 +21,25 @@ export type ProfileResponse = {
   language: string;
 };
 
+export type ProjectQuestionInput = {
+  prompt: string;
+  knowledge_point_id: string;
+  signals: string[];
+};
+
+export type AgentProjectAnalysis = {
+  analysis_id: string;
+  resume_id: string;
+  resume_text_hash: string;
+  status: "draft";
+  project: ProjectInput;
+  selection_reason: string;
+  confidence: number;
+  evidence: Array<{ field: keyof ProjectInput; quote: string }>;
+  questions: ProjectQuestionInput[];
+  missing_information: string[];
+};
+
 export type Question = {
   id: string;
   order: number;
@@ -111,7 +130,20 @@ export function parseResume(file: File) {
   });
 }
 
-export function createProfile(input: { resume_text: string; resume_id?: string; project: ProjectInput }) {
+export function analyzeAgentProject(resumeId: string, resumeText: string) {
+  return request<AgentProjectAnalysis>(
+    "/api/resumes/" + resumeId + "/agent-project-analysis",
+    { method: "POST", body: JSON.stringify({ resume_text: resumeText }) },
+  );
+}
+
+export function createProfile(input: {
+  resume_text: string;
+  resume_id?: string;
+  analysis_id?: string;
+  project: ProjectInput;
+  project_questions?: ProjectQuestionInput[];
+}) {
   return request<ProfileResponse>("/api/profile", { method: "POST", body: JSON.stringify(input) });
 }
 
