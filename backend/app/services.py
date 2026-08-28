@@ -28,7 +28,7 @@ from .models import (
 )
 from .project_analysis import validate_analysis_evidence
 from .providers import AssessmentProvider, ProjectAnalysisProvider, ProjectAnalysisProviderError
-from .question_bank import QuestionSpec
+from .question_bank import ProjectQuestionData, QuestionSpec, build_question_specs
 from .resume_files import (
     StoredResumeFile,
     ValidatedResumeFile,
@@ -304,7 +304,11 @@ def analyze_resume_project(
     }
 
 
-def create_session(db: Session, profile_id: str, question_specs: list[QuestionSpec]) -> dict:
+def create_session(
+    db: Session,
+    profile_id: str,
+    question_specs: list[QuestionSpec] | None = None,
+) -> dict:
     project = db.get(ResumeProject, profile_id)
     if project is None:
         raise NotFoundError("profile not found")
@@ -314,6 +318,26 @@ def create_session(db: Session, profile_id: str, question_specs: list[QuestionSp
     target = db.scalar(select(InterviewTarget).where(InterviewTarget.user_id == resume.user_id))
     if target is None:
         raise NotFoundError("interview target not found")
+    if question_specs is None:
+        project_questions = list(
+            db.scalars(
+                select(ResumeProjectQuestion)
+                .where(ResumeProjectQuestion.resume_project_id == project.id)
+                .order_by(ResumeProjectQuestion.order)
+            )
+        )
+        question_specs = build_question_specs(
+            [
+                ProjectQuestionData(
+                    prompt=question.prompt,
+                    knowledge_point_id=question.knowledge_point_id,
+                    signals=_signals_from_json(question.signals_json),
+                )
+                for question in project_questions
+            ]
+            if project_questions
+            else None
+        )
 
     session = InterviewSession(
         id=str(uuid4()),

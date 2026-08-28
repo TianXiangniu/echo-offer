@@ -1,10 +1,12 @@
 from io import BytesIO
+import json
+from uuid import uuid4
 
 import pymupdf
 from docx import Document
 from sqlalchemy import select
 
-from app.models import Resume, ResumeSource, User
+from app.models import Resume, ResumeProjectQuestion, ResumeSource, User
 
 
 PROJECT = {
@@ -79,7 +81,58 @@ def test_profile_and_session_creation_have_fixed_shape(client):
     assert [question["category"] for question in session["questions"]].count("project") == 3
     assert [question["category"] for question in session["questions"]].count("agent") == 3
     assert [question["category"] for question in session["questions"]].count("reliability") == 2
-    assert [question["is_anchor"] for question in session["questions"][:3]] == [True, True, True]
+    assert [question["category"] for question in session["questions"]] == [
+        "project", "project", "project",
+        "agent", "agent", "agent",
+        "reliability", "reliability",
+    ]
+    assert [question["is_anchor"] for question in session["questions"]] == [
+        True, False, False,
+        True, False, False,
+        True, False,
+    ]
+
+
+def test_custom_project_questions_are_grouped_before_fixed_questions(client):
+    profile_response = client.post(
+        "/api/profile",
+        json={"resume_text": "简历文本", "project": PROJECT},
+    )
+    assert profile_response.status_code == 200
+    profile_id = profile_response.json()["profile_id"]
+
+    with client.app.state.session_factory() as db:
+        for order, prompt in enumerate(["项目题一", "项目题二", "项目题三"], start=1):
+            db.add(
+                ResumeProjectQuestion(
+                    id=str(uuid4()),
+                    resume_project_id=profile_id,
+                    order=order,
+                    prompt=prompt,
+                    knowledge_point_id=f"project.custom.{order}",
+                    signals_json=json.dumps(["项目", "证据"], ensure_ascii=False),
+                    source="user_edited",
+                )
+            )
+        db.commit()
+
+    session_response = client.post("/api/sessions", json={"profile_id": profile_id})
+
+    assert session_response.status_code == 200
+    questions = session_response.json()["questions"]
+    assert [question["category"] for question in questions] == [
+        "project", "project", "project",
+        "agent", "agent", "agent",
+        "reliability", "reliability",
+    ]
+    assert [question["prompt"] for question in questions[:3]] == [
+        "项目题一", "项目题二", "项目题三"
+    ]
+    assert [question["is_anchor"] for question in questions] == [
+        True, False, False,
+        True, False, False,
+        True, False,
+    ]
 
 
 def test_parse_pdf_persists_resume_source(client):
@@ -277,7 +330,7 @@ def test_blank_submitted_answer_is_rejected(client, session_context):
 
 def test_report_aggregates_without_uncalibrated_score(client, session_context):
     session_id, questions = session_context
-    for index, question in enumerate(questions[:2]):
+    for index, question in enumerate([questions[0], questions[3]]):
         response = client.post(
             f"/api/sessions/{session_id}/answers",
             json={

@@ -22,7 +22,6 @@ from .providers import (
     RuleBasedAssessmentProvider,
     SiliconFlowProjectAnalysisProvider,
 )
-from .question_bank import build_question_specs
 from .resume_files import ResumeUploadError, read_upload_bytes
 from .resume_parsers import ResumeParserError
 from .schemas import (
@@ -179,7 +178,7 @@ def create_app(
 
     @app.post("/api/sessions", response_model=SessionCreateResponse)
     def session(payload: SessionCreate, db: Session = Depends(get_db)):
-        return create_session(db, payload.profile_id, build_question_specs())
+        return create_session(db, payload.profile_id)
 
     @app.get("/api/sessions/{session_id}", response_model=SessionView)
     def session_view(session_id: str, db: Session = Depends(get_db)):

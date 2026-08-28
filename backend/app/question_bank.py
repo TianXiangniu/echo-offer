@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Sequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,7 +13,14 @@ class QuestionSpec:
     signals: tuple[str, ...]
 
 
-def build_question_specs() -> list[QuestionSpec]:
+@dataclass(frozen=True, slots=True)
+class ProjectQuestionData:
+    prompt: str
+    knowledge_point_id: str
+    signals: tuple[str, ...]
+
+
+def _default_project_specs() -> list[QuestionSpec]:
     return [
         QuestionSpec(
             order=1,
@@ -25,30 +33,52 @@ def build_question_specs() -> list[QuestionSpec]:
         ),
         QuestionSpec(
             order=2,
-            category="agent",
-            is_anchor=True,
-            prompt="如果 RAG 系统召回了很多无关内容，你会怎样定位并改进问题？",
-            knowledge_point_id="rag.retrieval_diagnosis",
-            rubric_version="alpha-local-v1",
-            signals=("召回", "相关性", "评估"),
-        ),
-        QuestionSpec(
-            order=3,
-            category="reliability",
-            is_anchor=True,
-            prompt="线上 Agent 延迟突然升高时，你会如何拆解排查并降低影响？",
-            knowledge_point_id="engineering.latency_diagnosis",
-            rubric_version="alpha-local-v1",
-            signals=("延迟", "监控", "降级"),
-        ),
-        QuestionSpec(
-            order=4,
             category="project",
             is_anchor=False,
             prompt="结合你的项目，解释一次关键技术方案的取舍，以及为什么没有选择另一个方案。",
             knowledge_point_id="project.architecture_tradeoffs",
             rubric_version="alpha-local-v1",
             signals=("方案", "取舍", "约束"),
+        ),
+        QuestionSpec(
+            order=3,
+            category="project",
+            is_anchor=False,
+            prompt="你会怎样验证项目中的技术效果不是偶然样本，而是可以稳定复现的结果？",
+            knowledge_point_id="project.evaluation_and_reproducibility",
+            rubric_version="alpha-local-v1",
+            signals=("指标", "对照", "复现"),
+        ),
+    ]
+
+
+def _custom_project_specs(project_questions: Sequence[ProjectQuestionData]) -> list[QuestionSpec]:
+    if len(project_questions) != 3:
+        raise ValueError("exactly three project questions are required")
+    return [
+        QuestionSpec(
+            order=index,
+            category="project",
+            is_anchor=index == 1,
+            prompt=question.prompt,
+            knowledge_point_id=question.knowledge_point_id,
+            rubric_version="alpha-local-v1",
+            signals=question.signals,
+        )
+        for index, question in enumerate(project_questions, start=1)
+    ]
+
+
+def _fixed_agent_specs() -> list[QuestionSpec]:
+    return [
+        QuestionSpec(
+            order=4,
+            category="agent",
+            is_anchor=True,
+            prompt="如果 RAG 系统召回了很多无关内容，你会怎样定位并改进问题？",
+            knowledge_point_id="rag.retrieval_diagnosis",
+            rubric_version="alpha-local-v1",
+            signals=("召回", "相关性", "评估"),
         ),
         QuestionSpec(
             order=5,
@@ -68,17 +98,22 @@ def build_question_specs() -> list[QuestionSpec]:
             rubric_version="alpha-local-v1",
             signals=("工具", "参数校验", "重试"),
         ),
+    ]
+
+
+def _fixed_reliability_specs() -> list[QuestionSpec]:
+    return [
         QuestionSpec(
             order=7,
-            category="project",
-            is_anchor=False,
-            prompt="你会怎样验证项目中的技术效果不是偶然样本，而是可以稳定复现的结果？",
-            knowledge_point_id="project.evaluation_and_reproducibility",
+            category="reliability",
+            is_anchor=True,
+            prompt="线上 Agent 延迟突然升高时，你会如何拆解排查并降低影响？",
+            knowledge_point_id="engineering.latency_diagnosis",
             rubric_version="alpha-local-v1",
-            signals=("指标", "对照", "复现"),
+            signals=("延迟", "监控", "降级"),
         ),
         QuestionSpec(
-            order=8,
+            order=7,
             category="reliability",
             is_anchor=False,
             prompt="如果模型输出出现事实错误或敏感内容，你会如何建立防护和回溯机制？",
@@ -87,3 +122,25 @@ def build_question_specs() -> list[QuestionSpec]:
             signals=("校验", "防护", "回溯"),
         ),
     ]
+
+
+def build_question_specs(
+    project_questions: Sequence[ProjectQuestionData] | None = None,
+) -> list[QuestionSpec]:
+    project_specs = (
+        _default_project_specs()
+        if project_questions is None
+        else _custom_project_specs(project_questions)
+    )
+    fixed_specs = _fixed_agent_specs() + _fixed_reliability_specs()
+    for index, spec in enumerate(fixed_specs, start=4):
+        fixed_specs[index - 4] = QuestionSpec(
+            order=index,
+            category=spec.category,
+            is_anchor=spec.is_anchor,
+            prompt=spec.prompt,
+            knowledge_point_id=spec.knowledge_point_id,
+            rubric_version=spec.rubric_version,
+            signals=spec.signals,
+        )
+    return project_specs + fixed_specs
