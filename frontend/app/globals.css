@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: Georgia, "Noto Serif SC", serif;
+  --font-body: "Segoe UI", "Noto Sans SC", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #16151f;
+  color: #f6f1e8;
+  font-family: var(--font-body);
+}
