@@ -11,7 +11,61 @@ class ProjectInput(BaseModel):
     core_solution: str = Field(min_length=1)
     engineering_challenges: str = Field(min_length=1)
     failure_improvements: str = Field(min_length=1)
-    quantified_results: str = Field(min_length=1)
+    quantified_results: str = Field(default="", max_length=4000)
+
+
+ProjectFieldName = Literal[
+    "project_name",
+    "background_goal",
+    "tech_stack",
+    "responsibilities",
+    "core_solution",
+    "engineering_challenges",
+    "failure_improvements",
+    "quantified_results",
+]
+
+
+class AgentProjectAnalysisRequest(BaseModel):
+    resume_text: str = Field(min_length=1, max_length=100_000)
+
+
+class ProjectAnalysisProject(BaseModel):
+    project_name: str = Field(default="", max_length=200)
+    background_goal: str = Field(default="", max_length=4000)
+    tech_stack: str = Field(default="", max_length=4000)
+    responsibilities: str = Field(default="", max_length=4000)
+    core_solution: str = Field(default="", max_length=4000)
+    engineering_challenges: str = Field(default="", max_length=4000)
+    failure_improvements: str = Field(default="", max_length=4000)
+    quantified_results: str = Field(default="", max_length=4000)
+
+
+class ProjectAnalysisEvidence(BaseModel):
+    field: ProjectFieldName
+    quote: str = Field(min_length=1, max_length=2000)
+
+
+class ProjectQuestionInput(BaseModel):
+    prompt: str = Field(min_length=1, max_length=1000)
+    knowledge_point_id: str = Field(min_length=1, max_length=120)
+    signals: list[str] = Field(min_length=2, max_length=8)
+
+
+class AgentProjectAnalysisResponse(BaseModel):
+    project: ProjectAnalysisProject
+    selection_reason: str = Field(min_length=1, max_length=2000)
+    confidence: float = Field(ge=0, le=1)
+    evidence: list[ProjectAnalysisEvidence] = Field(max_length=32)
+    questions: list[ProjectQuestionInput] = Field(min_length=3, max_length=3)
+    missing_information: list[str] = Field(max_length=32)
+
+
+class AgentProjectAnalysisResponseEnvelope(AgentProjectAnalysisResponse):
+    analysis_id: str
+    resume_id: str
+    resume_text_hash: str
+    status: Literal["draft"]
 
 
 class ProfileCreate(BaseModel):

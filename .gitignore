@@ -10,3 +10,9 @@ node_modules/
 frontend/.next/
 frontend/out/
 frontend/.env.local
+backend/.env
+backend/.env.*
+!backend/.env.example
+.env
+.env.*
+!.env.example
