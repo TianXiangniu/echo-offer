@@ -1,4 +1,5 @@
 import json
+import hashlib
 
 import httpx
 import pymupdf
@@ -6,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from app.models import ResumeProject, ResumeProjectAnalysis, ResumeProjectQuestion
+from app.models import Resume, ResumeProject, ResumeProjectAnalysis, ResumeProjectQuestion
 from app.project_analysis import clean_model_json, validate_analysis_evidence
 from app.providers import ProjectAnalysisProviderError, SiliconFlowProjectAnalysisProvider
 from app.schemas import AgentProjectAnalysisResponse
@@ -255,3 +256,76 @@ def test_confirmed_analysis_saves_edited_project_and_questions(client):
         assert saved_project.analysis_id == analysis["analysis_id"]
         assert saved_questions[0].source == "user_edited"
         assert saved_analysis.status == "confirmed"
+
+
+def test_invalid_analysis_evidence_returns_stable_error(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    invalid = valid_analysis_payload()
+    invalid["evidence"][0]["quote"] = "不存在于简历中的证据"
+    client.app.state.project_analysis_provider = FakeProjectAnalysisProvider(
+        result=AgentProjectAnalysisResponse.model_validate(invalid)
+    )
+
+    response = client.post(
+        f"/api/resumes/{parsed['resume_id']}/agent-project-analysis",
+        json={"resume_text": "负责检索链路和线上监控"},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["code"] == "invalid_model_response"
+
+
+def test_provider_not_configured_returns_503(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    client.app.state.project_analysis_provider = SiliconFlowProjectAnalysisProvider(
+        api_key="",
+        model="test-model",
+        base_url="https://api.siliconflow.cn/v1",
+        timeout_seconds=5,
+    )
+
+    response = client.post(
+        f"/api/resumes/{parsed['resume_id']}/agent-project-analysis",
+        json={"resume_text": "简历文本"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "provider_not_configured"
+
+
+def test_text_changed_after_analysis_is_saved_with_final_hash(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    result = AgentProjectAnalysisResponse.model_validate(valid_analysis_payload())
+    client.app.state.project_analysis_provider = FakeProjectAnalysisProvider(result=result)
+    analysis = client.post(
+        f"/api/resumes/{parsed['resume_id']}/agent-project-analysis",
+        json={"resume_text": "负责检索链路和线上监控"},
+    ).json()
+    final_text = "负责检索链路和线上监控；用户补充了故障复盘。"
+
+    response = client.post(
+        "/api/profile",
+        json={
+            "resume_id": parsed["resume_id"],
+            "resume_text": final_text,
+            "analysis_id": analysis["analysis_id"],
+            "project": result.project.model_dump(),
+            "project_questions": [question.model_dump() for question in result.questions],
+        },
+    )
+
+    assert response.status_code == 200
+    with client.app.state.session_factory() as db:
+        saved_project = db.get(ResumeProject, response.json()["profile_id"])
+        saved_resume = db.get(Resume, parsed["resume_id"])
+        assert saved_project is not None
+        assert saved_resume.text_hash == hashlib.sha256(final_text.encode("utf-8")).hexdigest()
