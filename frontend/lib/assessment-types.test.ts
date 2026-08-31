@@ -37,7 +37,7 @@ if (batchResponse.evaluated_count !== 2) {
   throw new Error("batch assessment type contract failed");
 }
 
-if (assessmentStages.length !== 4 || assessmentStages[1] !== "请求模型") {
+if (assessmentStages.length !== 3 || assessmentStages[1] !== "整理回答") {
   throw new Error("batch assessment stage contract failed");
 }
 

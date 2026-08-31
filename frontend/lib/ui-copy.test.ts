@@ -29,3 +29,13 @@ for (const token of ["homeCopy", "准备进度", "确认项目，开始面试"])
 for (const token of ["Evidence Rail", "冻结事实", "模型引用证据"]) {
   if (homePage.includes(token)) throw new Error(`home page leaked: ${token}`);
 }
+
+const interviewPage = readFileSync(new URL("../app/interview/[id]/page.tsx", import.meta.url), "utf8");
+const assessmentFlow = readFileSync(new URL("./assessment-flow.ts", import.meta.url), "utf8");
+for (const token of ["interviewCopy", "保存并继续", "本题不提供提示", "答题进度"]) {
+  if (!interviewPage.includes(token)) throw new Error(`interview page missing: ${token}`);
+}
+for (const token of ["Evidence Rail", "Rubric", "请求模型", "校验证据"]) {
+  if (interviewPage.includes(token)) throw new Error(`interview page leaked: ${token}`);
+  if (assessmentFlow.includes(token)) throw new Error(`assessment flow leaked: ${token}`);
+}

@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import {
@@ -12,16 +13,17 @@ import {
   submitAnswer,
 } from "@/lib/api";
 import { assessmentStages, type AssessmentStage } from "@/lib/assessment-flow";
+import { brandCopy, interviewCopy, statusCopy } from "@/lib/ui-copy";
 
 function newSubmissionId() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-const categoryLabels = { project: "项目深挖", agent: "Agent 基础", reliability: "工程可靠性" };
+const categoryLabels = { project: "项目题", agent: "基础题", reliability: "工程题" } as const;
 
 function batchErrorMessage(result: AssessmentBatchResponse) {
   const failedAssessment = result.assessments.find((item) => item.assessment.error_reason);
-  return failedAssessment?.assessment.error_reason ?? "AI 评估未完成，请点击重试。";
+  return failedAssessment?.assessment.error_reason ?? "报告没有生成，请点击重试。";
 }
 
 export default function InterviewPage() {
@@ -49,21 +51,16 @@ export default function InterviewPage() {
   useEffect(() => { void loadSession(); }, [sessionId]);
 
   const question = session?.current_question;
-  const progressRatio = useMemo(
-    () => session ? Math.round((session.progress.completed / session.progress.total) * 100) : 0,
-    [session],
-  );
 
   async function generateAssessment() {
     setBusy(true);
     setError("");
     setCanRetryAssessment(false);
-    setAssessmentStage("收集回答");
+    setAssessmentStage("保存回答");
     try {
-      setAssessmentStage("请求模型");
+      setAssessmentStage("整理回答");
       const result = await assessSession(sessionId);
       setAssessment(result);
-      setAssessmentStage("校验证据");
       if (result.status !== "valid") {
         setCanRetryAssessment(true);
         setError(batchErrorMessage(result));
@@ -75,7 +72,7 @@ export default function InterviewPage() {
     } catch (caught) {
       setCanRetryAssessment(true);
       setAssessmentStage(null);
-      setError(caught instanceof Error ? caught.message : "评估失败，请稍后重试。");
+      setError(caught instanceof Error ? caught.message : "报告生成失败，请稍后重试。");
     } finally {
       setBusy(false);
     }
@@ -100,9 +97,7 @@ export default function InterviewPage() {
       setSubmissionId(newSubmissionId());
       const next = await getSession(sessionId);
       setSession(next);
-      if (next.status === "completed") {
-        await generateAssessment();
-      }
+      if (next.status === "completed") await generateAssessment();
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 409) {
         setError("这次提交编号已经使用过，但内容不同。请刷新当前面试状态后再继续。");
@@ -119,43 +114,106 @@ export default function InterviewPage() {
     void handleAnswer("submitted");
   }
 
-  if (!session && !error) return <main className="grid min-h-screen place-items-center bg-ink text-paper">正在恢复面试状态…</main>;
+  if (!session && !error) {
+    return <main className="signal-page grid min-h-screen place-items-center"><p className="signal-note">正在恢复面试状态…</p></main>;
+  }
+
+  const completedCount = session?.progress.completed ?? 0;
+  const totalCount = session?.progress.total ?? 0;
+  const currentOrder = question?.order ?? totalCount;
 
   return (
-    <main className="min-h-screen bg-paper text-ink">
-      <div className="mx-auto max-w-6xl px-5 py-7 sm:px-10">
-        <header className="flex items-center justify-between border-b border-ink/10 pb-6">
-          <button onClick={() => router.push("/")} className="font-display text-xl">Agent Echo</button>
-          <div className="text-right text-xs text-ink/50"><span className="block uppercase tracking-[0.2em]">Unprompted interview</span><span>回答完成后统一 AI 评分</span></div>
+    <main className="signal-page">
+      <div className="signal-container">
+        <header className="signal-header">
+          <button type="button" onClick={() => router.push("/")} className="signal-brand" aria-label={`${brandCopy.name} 首页`}>
+            <span className="signal-brand-mark" aria-hidden="true">E/</span>
+            <span className="signal-brand-name">{brandCopy.name}</span>
+          </button>
+          <div className="signal-header-meta">
+            <span>{brandCopy.interview}</span>
+            <strong>{interviewCopy.questionOf(currentOrder, totalCount)}</strong>
+          </div>
         </header>
-        {error && <div className="mt-6 rounded-2xl border border-red-700/20 bg-red-50 px-5 py-4 text-sm text-red-800">{error}</div>}
-        {session && question ? (
-          <section className="grid gap-10 pb-20 pt-10 lg:grid-cols-[0.35fr_0.65fr] lg:gap-20 lg:pt-16">
-            <aside>
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-signal">Session / {session.session_id.slice(0, 8)}</p>
-              <p className="mt-7 font-display text-6xl font-semibold">{String(question.order).padStart(2, "0")}</p>
-              <p className="mt-2 text-ink/50">共 {session.progress.total} 道问题</p>
-              <div className="mt-8 h-2 overflow-hidden rounded-full bg-ink/10"><div className="h-full rounded-full bg-signal transition-all" style={{ width: `${Math.max(progressRatio, 4)}%` }} /></div>
-              <div className="mt-3 flex justify-between text-xs text-ink/50"><span>已完成 {session.progress.completed}</span><span>剩余 {session.progress.total - session.progress.completed}</span></div>
-              <div className="mt-12 rounded-2xl border border-ink/10 bg-white/50 p-5 text-sm leading-7 text-ink/60"><p className="font-semibold text-ink">作答提示</p><p className="mt-2">先说结论，再解释机制、边界和工程取舍。全部问题完成后，系统会统一进行一次 AI 评分。</p></div>
-            </aside>
-            <form onSubmit={handleSubmit}>
-              <div className="flex flex-wrap items-center gap-3 text-sm text-ink/55"><span className="rounded-full bg-signal/10 px-3 py-1.5 font-semibold text-signal">{categoryLabels[question.category]}</span>{question.is_anchor && <span className="rounded-full border border-ember/40 px-3 py-1.5 text-ember">锚题 · 无提示</span>}</div>
-              <h1 className="mt-7 max-w-3xl font-display text-4xl font-semibold leading-tight sm:text-6xl">{question.prompt}</h1>
-              <p className="mt-5 text-sm text-ink/45">这是你的无提示首答。回答会原样保存，并在报告中保留可回溯证据。</p>
-              <textarea value={answerText} onChange={(event) => setAnswerText(event.target.value)} placeholder="从你的实际项目出发，写下你会如何回答……" className="mt-9 min-h-64 w-full resize-y rounded-3xl border border-ink/15 bg-white/65 p-6 text-base leading-8 text-ink outline-none transition placeholder:text-ink/25 focus:border-signal" />
-              <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-3"><button type="button" disabled={busy} onClick={() => void handleAnswer("explicit_unknown")} className="rounded-xl border border-ink/15 px-4 py-3 text-sm text-ink/65 transition hover:border-ink/40 disabled:opacity-50">我不知道</button><button type="button" disabled={busy} onClick={() => void handleAnswer("skipped")} className="rounded-xl border border-ink/15 px-4 py-3 text-sm text-ink/65 transition hover:border-ink/40 disabled:opacity-50">跳过</button></div><button type="submit" disabled={busy} className="rounded-xl bg-ink px-6 py-3.5 font-semibold text-paper transition hover:bg-signal disabled:cursor-wait disabled:opacity-50">{busy ? "正在保存…" : "提交首答  ↗"}</button></div>
-            </form>
+
+        <div className="signal-layout">
+          <aside className="signal-rail" aria-label="答题进度">
+            <p className="signal-rail-heading">答题进度</p>
+            <ol className="signal-rail-list">
+              <li className={`signal-rail-step ${question ? "is-active" : "is-done"}`} data-step="01">回答问题</li>
+              <li className={`signal-rail-step ${assessmentStage ? "is-active" : session?.status === "completed" ? "is-done" : ""}`} data-step="02">整理回答</li>
+              <li className={`signal-rail-step ${assessment?.status === "valid" ? "is-done" : ""}`} data-step="03">查看报告</li>
+            </ol>
+            <div className="signal-status" style={{ marginTop: 28 }}>
+              <p className="signal-status-title">{completedCount} / {totalCount}</p>
+              <p className="signal-status-copy">已经保存的回答</p>
+            </div>
+          </aside>
+
+          <section className="signal-workspace" aria-label="面试答题工作区">
+            {error && <div className="signal-alert" role="alert">{error}</div>}
+
+            {session && question ? (
+              <form onSubmit={handleSubmit}>
+                <div className="signal-intro">
+                  <p className="signal-eyebrow">{interviewCopy.progress} · {interviewCopy.questionOf(question.order, totalCount)}</p>
+                  <div className="signal-question-meta">
+                    <span className="signal-tag">{categoryLabels[question.category]}</span>
+                    {question.is_anchor && <span className="signal-tag" aria-label="本题不提供提示">{interviewCopy.noHint}</span>}
+                  </div>
+                  <h1 className="signal-question-text">{question.prompt}</h1>
+                  <p className="signal-copy">{interviewCopy.answerHelp}</p>
+                </div>
+
+                <div className="signal-panel signal-question">
+                  <label className="signal-field" htmlFor="answer-text">
+                    <span className="signal-field-label">你的回答</span>
+                    <textarea
+                      id="answer-text"
+                      value={answerText}
+                      onChange={(event) => setAnswerText(event.target.value)}
+                      placeholder="从你的实际项目出发，写下你会如何回答……"
+                      className="signal-textarea signal-answer"
+                      aria-label="你的面试回答"
+                    />
+                  </label>
+                  <div className="signal-actions signal-actions--between">
+                    <div className="signal-answer-actions">
+                      <button type="button" disabled={busy} onClick={() => void handleAnswer("explicit_unknown")} className="signal-button signal-button--secondary">{interviewCopy.unknown}</button>
+                      <button type="button" disabled={busy} onClick={() => void handleAnswer("skipped")} className="signal-button signal-button--quiet">{interviewCopy.skip}</button>
+                    </div>
+                    <button type="submit" aria-label="保存并继续" disabled={busy} className="signal-button signal-button--primary">
+                      {busy ? "正在保存…" : interviewCopy.saveAndContinue}
+                    </button>
+                  </div>
+                </div>
+                <p className="signal-footer">每道回答都会保存。全部答完后，系统会一次生成本场报告。</p>
+              </form>
+            ) : session ? (
+              <section className="signal-intro" aria-label="面试完成状态">
+                <p className="signal-eyebrow">{brandCopy.interview}</p>
+                <h1 className="signal-title">{interviewCopy.completedTitle}</h1>
+                <p className="signal-copy">{statusCopy.saved}</p>
+                {assessmentStage && (
+                  <div className="signal-status" style={{ marginTop: 30 }} aria-live="polite">
+                    <p className="signal-status-title">{interviewCopy.generatingTitle}</p>
+                    <p className="signal-status-copy">{statusCopy.generating}</p>
+                    <div className="signal-progress">
+                      <div className="signal-progress-line" />
+                      <span className="signal-progress-label">{assessmentStage}</span>
+                    </div>
+                  </div>
+                )}
+                {assessment?.status !== "valid" && (canRetryAssessment || !assessment) && (
+                  <button type="button" onClick={() => void generateAssessment()} disabled={busy} className="signal-button signal-button--primary" style={{ marginTop: 28 }}>
+                    {busy ? "正在生成…" : statusCopy.timeoutAction}
+                  </button>
+                )}
+                {assessment?.status === "valid" && <button type="button" onClick={() => router.push(`/report/${sessionId}`)} className="signal-button signal-button--primary" style={{ marginTop: 28 }}>查看本场报告</button>}
+              </section>
+            ) : null}
           </section>
-        ) : session ? (
-          <section className="mx-auto max-w-xl py-24 text-center">
-            <p className="text-sm uppercase tracking-[0.2em] text-signal">Interview complete</p>
-            <h1 className="mt-4 font-display text-4xl">这场面试已经完成。</h1>
-            {assessmentStage ? <div className="mt-8 rounded-2xl border border-signal/20 bg-white/65 p-5 text-left"><p className="text-sm text-ink/55">正在生成本场评估</p><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{assessmentStages.map((stage) => <div key={stage} className={`rounded-xl px-3 py-3 text-center text-xs ${stage === assessmentStage ? "bg-signal text-white" : "bg-ink/5 text-ink/45"}`}>{stage}</div>)}</div><p className="mt-4 text-xs text-ink/45">本场只调用一次 AI，完成后会自动进入报告。</p></div> : null}
-            {assessment?.status !== "valid" && (canRetryAssessment || !assessment) && <button onClick={() => void generateAssessment()} disabled={busy} className="mt-8 rounded-xl bg-ink px-6 py-3 font-semibold text-paper disabled:opacity-50">{busy ? "评估中…" : assessment ? "重新生成评估" : "生成本场评估"}</button>}
-            {assessment?.status === "valid" && <button onClick={() => router.push(`/report/${sessionId}`)} className="mt-8 rounded-xl bg-ink px-6 py-3 font-semibold text-paper">查看报告</button>}
-          </section>
-        ) : null}
+        </div>
       </div>
     </main>
   );

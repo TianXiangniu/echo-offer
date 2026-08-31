@@ -1,7 +1,6 @@
 export const assessmentStages = [
-  "收集回答",
-  "请求模型",
-  "校验证据",
+  "保存回答",
+  "整理回答",
   "生成报告",
 ] as const;
 
