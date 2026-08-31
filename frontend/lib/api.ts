@@ -40,6 +40,13 @@ export type AgentProjectAnalysis = {
   missing_information: string[];
 };
 
+export type AgentAnalysisStreamEvent =
+  | { event: "stage"; data: { stage: "received" | "analyzing" | "validating" | "completed"; message: string } }
+  | { event: "heartbeat"; data: { stage: "analyzing" } }
+  | { event: "result"; data: AgentProjectAnalysis }
+  | { event: "done"; data: { status: "completed" } }
+  | { event: "error"; data: { code: string; message: string } };
+
 export type Question = {
   id: string;
   order: number;
@@ -89,6 +96,25 @@ export class ApiError extends Error {
   }
 }
 
+type ParsedSseBlock = { event: string; data: unknown };
+
+export function parseSseBlock(block: string): ParsedSseBlock | null {
+  let event = "message";
+  const dataLines: string[] = [];
+
+  for (const line of block.split(/\r?\n/)) {
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+
+  if (!dataLines.length) return null;
+  return { event, data: JSON.parse(dataLines.join("\n")) };
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -101,7 +127,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers,
     });
   } catch {
-    throw new ApiError(0, "暂时无法连接面试服务，请确认后端运行在 http://localhost:8000。");
+    throw new ApiError(0, "暂时无法连接面试服务，请确认后端运行在 http://localhost:8010。");
   }
 
   const body = (await response.json().catch(() => ({}))) as { detail?: string };
@@ -135,6 +161,79 @@ export function analyzeAgentProject(resumeId: string, resumeText: string) {
     "/api/resumes/" + resumeId + "/agent-project-analysis",
     { method: "POST", body: JSON.stringify({ resume_text: resumeText }) },
   );
+}
+
+export async function analyzeAgentProjectStream(
+  resumeId: string,
+  resumeText: string,
+  onEvent: (event: AgentAnalysisStreamEvent) => void,
+): Promise<AgentProjectAnalysis> {
+  let response: Response;
+  try {
+    response = await fetch(
+      API_BASE + "/api/resumes/" + resumeId + "/agent-project-analysis/stream",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({ resume_text: resumeText }),
+      },
+    );
+  } catch {
+    throw new ApiError(0, "暂时无法连接面试服务，请确认后端运行在 http://localhost:8010。");
+  }
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { detail?: string };
+    throw new ApiError(response.status, body.detail ?? `请求失败（${response.status}）`);
+  }
+  if (!response.body) {
+    throw new ApiError(0, "浏览器不支持流式响应，请刷新后重试。");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: AgentProjectAnalysis | undefined;
+  let receivedDone = false;
+
+  const consumeBlock = (block: string) => {
+    const parsed = parseSseBlock(block);
+    if (!parsed) return;
+
+    if (parsed.event === "error") {
+      const errorData = parsed.data as { code?: string; message?: string };
+      throw new ApiError(502, errorData.message ?? "AI 分析失败，请稍后重试。");
+    }
+    if (parsed.event === "result") {
+      result = parsed.data as AgentProjectAnalysis;
+    } else if (parsed.event === "done") {
+      receivedDone = true;
+    }
+    onEvent(parsed as AgentAnalysisStreamEvent);
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (value) buffer += decoder.decode(value, { stream: !done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) consumeBlock(block);
+      if (done) break;
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) consumeBlock(buffer);
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!result || !receivedDone) {
+    throw new ApiError(0, "分析连接中断，请重试");
+  }
+  return result;
 }
 
 export function createProfile(input: {
