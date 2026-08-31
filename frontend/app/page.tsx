@@ -1,6 +1,7 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useState } from "react";
+import type { ChangeEvent, FormEvent } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -13,6 +14,7 @@ import {
   ProjectQuestionInput,
   ResumeParseResponse,
 } from "@/lib/api";
+import { brandCopy, homeCopy } from "@/lib/ui-copy";
 
 const emptyProject: ProjectInput = {
   project_name: "",
@@ -25,16 +27,18 @@ const emptyProject: ProjectInput = {
   quantified_results: "",
 };
 
-const fields: Array<{ key: keyof ProjectInput; label: string; hint: string }> = [
-  { key: "project_name", label: "项目名称", hint: "例如：企业知识库问答 Agent" },
-  { key: "background_goal", label: "背景与目标", hint: "它解决了什么真实问题？" },
-  { key: "tech_stack", label: "技术栈", hint: "语言、框架、模型、数据库" },
-  { key: "responsibilities", label: "个人职责", hint: "你亲自设计、实现和负责什么？" },
-  { key: "core_solution", label: "核心方案", hint: "链路、关键模块和技术选择" },
-  { key: "engineering_challenges", label: "工程难点", hint: "遇到过哪些约束、故障或权衡？" },
-  { key: "failure_improvements", label: "故障与改进", hint: "一次失败、定位过程和改进动作" },
-  { key: "quantified_results", label: "量化结果", hint: "指标、对照和可复现的结果" },
+const fields: Array<{ key: keyof ProjectInput; hint: string }> = [
+  { key: "project_name", hint: "例如：企业知识库问答 Agent" },
+  { key: "background_goal", hint: "它解决了什么真实问题？" },
+  { key: "tech_stack", hint: "语言、框架、模型、数据库" },
+  { key: "responsibilities", hint: "你亲自设计、实现和负责什么？" },
+  { key: "core_solution", hint: "链路、关键模块和技术选择" },
+  { key: "engineering_challenges", hint: "遇到过哪些约束、故障或权衡？" },
+  { key: "failure_improvements", hint: "一次失败、定位过程和改进动作" },
+  { key: "quantified_results", hint: "指标、对照和可复现的结果" },
 ];
+
+const preparationSteps = ["上传简历", "检查项目内容", "开始面试"];
 
 export default function HomePage() {
   const router = useRouter();
@@ -93,25 +97,32 @@ export default function HomePage() {
 
   async function handleAnalyze() {
     if (!resumeId || !resumeText.trim()) {
-      setError("请先上传 PDF 或 DOCX 简历，再进行 AI 分析。");
+      setError("请先上传 PDF 或 DOCX 简历，再进行整理。");
       return;
     }
     if (!window.confirm("完整简历文本将发送给硅基流动用于项目分析，是否继续？")) return;
 
     setAnalyzing(true);
-    setAnalysisStage("准备分析…");
+    setAnalysisStage("正在整理项目内容…");
     setError("");
     try {
       const result = await analyzeAgentProjectStream(resumeId, resumeText, (event) => {
-        if (event.event === "stage") setAnalysisStage(event.data.message);
+        if (event.event !== "stage") return;
+        const messages: Record<string, string> = {
+          received: "已收到简历内容…",
+          analyzing: "正在整理项目内容…",
+          validating: "正在生成问题…",
+          completed: "整理完成",
+        };
+        setAnalysisStage(messages[event.data.stage] ?? "正在整理项目内容…");
       });
       setAnalysisId(result.analysis_id);
       setAnalysisResult(result);
       setProject(result.project);
       setProjectQuestions(result.questions);
     } catch (caught) {
-      setAnalysisStage("分析失败，可重试");
-      setError(caught instanceof Error ? caught.message : "AI 分析失败，请稍后重试。");
+      setAnalysisStage("整理失败，可以重试");
+      setError(caught instanceof Error ? caught.message : "项目整理失败，请稍后重试。");
     } finally {
       setAnalyzing(false);
     }
@@ -144,167 +155,190 @@ export default function HomePage() {
     }
   }
 
+  const activeStep = analysisResult ? 2 : resumeText.trim() ? 1 : 0;
+
   return (
-    <main className="min-h-screen bg-ink px-5 py-8 text-paper sm:px-10 lg:px-16">
-      <div className="mx-auto max-w-7xl">
-        <header className="flex items-center justify-between border-b border-white/10 pb-6">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-full bg-signal font-display text-xl text-white">E</div>
-            <div>
-              <p className="font-display text-lg">Agent Echo</p>
-              <p className="text-xs tracking-[0.18em] text-white/45">INTERVIEW PREP / ALPHA</p>
-            </div>
+    <main className="signal-page">
+      <div className="signal-container">
+        <header className="signal-header">
+          <a className="signal-brand" href="/" aria-label={`${brandCopy.name} 首页`}>
+            <span className="signal-brand-mark" aria-hidden="true">E/</span>
+            <span className="signal-brand-name">{brandCopy.name}</span>
+          </a>
+          <div className="signal-header-meta">
+            <span>准备工作区</span>
+            <strong>Agent 应用工程师</strong>
           </div>
-          <p className="hidden text-sm text-white/45 md:block">中文 · Agent 应用工程师 · 1—3 年</p>
         </header>
 
-        <section className="grid gap-12 pb-20 pt-16 lg:grid-cols-[0.8fr_1.2fr] lg:gap-20 lg:pt-24">
-          <div>
-            <p className="mb-5 text-sm font-semibold uppercase tracking-[0.25em] text-signal">01 / 先把事实说清楚</p>
-            <h1 className="max-w-xl font-display text-5xl font-semibold leading-[1.05] tracking-tight sm:text-7xl">让面试从你的真实项目开始。</h1>
-            <p className="mt-7 max-w-lg text-lg leading-8 text-white/60">Agent Echo 不用模板化简历猜测你做过什么。先确认项目事实，再用 8 道问题看你如何解释方案、边界与工程结果。</p>
-            <div className="mt-10 grid max-w-md grid-cols-3 gap-3 text-center text-xs text-white/50">
-              <div className="border-l border-signal/70 pl-3 text-left"><strong className="block text-2xl text-paper">08</strong>道固定问题</div>
-              <div className="border-l border-ember/70 pl-3 text-left"><strong className="block text-2xl text-paper">03</strong>道锚题</div>
-              <div className="border-l border-white/30 pl-3 text-left"><strong className="block text-2xl text-paper">0—4</strong>级评估</div>
-            </div>
-          </div>
+        <div className="signal-layout">
+          <aside className="signal-rail" aria-label="准备进度">
+            <p className="signal-rail-heading">准备进度</p>
+            <ol className="signal-rail-list">
+              {preparationSteps.map((step, index) => (
+                <li
+                  key={step}
+                  className={`signal-rail-step ${index === activeStep ? "is-active" : ""} ${index < activeStep ? "is-done" : ""}`}
+                  data-step={`0${index + 1}`}
+                >
+                  {step}
+                </li>
+              ))}
+            </ol>
+          </aside>
 
-          <form onSubmit={handleSubmit} className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-6 shadow-2xl shadow-black/20 sm:p-8">
-            <div className="mb-8 flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-white/40">Profile / Project</p>
-                <h2 className="mt-2 font-display text-2xl">确认你的项目事实</h2>
-              </div>
-              <span className="rounded-full border border-signal/40 px-3 py-1 text-xs text-signal">本地保存</span>
+          <section className="signal-workspace" aria-label="项目准备工作区">
+            <div className="signal-intro">
+              <p className="signal-eyebrow">{homeCopy.eyebrow}</p>
+              <h1 className="signal-title">{homeCopy.projectTitle}</h1>
+              <p className="signal-copy">{homeCopy.projectDescription}</p>
             </div>
 
-            <div className="mb-5 rounded-2xl border border-signal/20 bg-signal/[0.04] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-paper">上传简历文件</p>
-                  <p className="mt-1 text-xs leading-5 text-white/45">支持 PDF / DOCX，提取后仍可编辑，扫描件暂不支持。</p>
+            <form onSubmit={handleSubmit}>
+              <section className="signal-section" aria-labelledby="resume-heading">
+                <h2 id="resume-heading" className="signal-section-label">{homeCopy.uploadTitle}</h2>
+                <div className="signal-panel signal-upload">
+                  <div className="signal-upload-copy">
+                    <p className="signal-upload-title">把简历放进来</p>
+                    <p className="signal-upload-hint">{homeCopy.uploadHint} 扫描件暂不支持。</p>
+                  </div>
+                  <label className="signal-button signal-button--secondary">
+                    <span>{uploading ? "正在解析…" : "选择文件"}</span>
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      onChange={handleResumeUpload}
+                      disabled={uploading || busy}
+                      className="signal-input-hidden"
+                    />
+                  </label>
+                  {resumeSource && !uploading && (
+                    <div className="signal-note">
+                      {resumeSource.original_filename} · {resumeSource.unit_count}{resumeSource.source_type === "pdf" ? " 页" : " 个文本块"} · {resumeSource.character_count} 字符
+                      <button type="button" onClick={switchToManualResume} className="signal-button signal-button--quiet">改为手动编辑</button>
+                    </div>
+                  )}
                 </div>
-                <label className="cursor-pointer rounded-xl border border-signal/40 px-3 py-2 text-xs font-semibold text-signal transition hover:bg-signal/10 focus-within:ring-2 focus-within:ring-signal/60">
-                  <span>{uploading ? "正在解析…" : "选择文件"}</span>
-                  <input
-                    type="file"
-                    accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    onChange={handleResumeUpload}
-                    disabled={uploading || busy}
-                    className="sr-only"
-                  />
-                </label>
-              </div>
-              {uploading && <p className="mt-3 text-xs text-signal">正在读取文本，请稍候…</p>}
-              {resumeSource && !uploading && (
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3 text-xs">
-                  <p className="text-white/65">
-                    <span className="mr-2 rounded-full bg-signal/15 px-2 py-1 font-semibold text-signal">{resumeSource.source_type.toUpperCase()}</span>
-                    {resumeSource.original_filename} · {resumeSource.unit_count}{resumeSource.source_type === "pdf" ? " 页" : " 个文本块"} · {resumeSource.character_count} 字符
-                  </p>
-                  <button type="button" onClick={switchToManualResume} className="text-white/45 underline decoration-white/20 underline-offset-4 transition hover:text-paper">
-                    改为手动编辑
+                {uploading && <p className="signal-note">正在读取文本，请稍候…</p>}
+                {resumeSource?.warnings.map((warning) => <p key={warning} className="signal-note">提示：{warning}</p>)}
+              </section>
+
+              <section className="signal-section" aria-labelledby="resume-text-heading">
+                <h2 id="resume-text-heading" className="signal-section-label">简历文本</h2>
+                <textarea
+                  required
+                  value={resumeText}
+                  onChange={(event) => handleResumeTextChange(event.target.value)}
+                  placeholder="粘贴你的简历文本。它只作为项目上下文草稿，最终以你确认的项目事实为准。"
+                  className="signal-panel signal-textarea"
+                  aria-label="简历文本"
+                />
+              </section>
+
+              <section className="signal-section" aria-labelledby="analysis-heading">
+                <h2 id="analysis-heading" className="signal-section-label">先检查项目内容</h2>
+                <div className="signal-panel signal-upload">
+                  <div className="signal-upload-copy">
+                    <p className="signal-upload-title">{homeCopy.analyze}</p>
+                    <p className="signal-upload-hint">有简历文件时可以自动整理；整理结果仍然需要你确认。</p>
+                  </div>
+                  <button type="button" onClick={handleAnalyze} disabled={!resumeId || !resumeText.trim() || analyzing || busy || uploading} className="signal-button signal-button--primary">
+                    {analyzing ? "正在整理…" : analysisResult ? homeCopy.analyzeAgain : "开始整理"}
                   </button>
                 </div>
-              )}
-              {resumeSource?.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-amber-200">{warning}</p>)}
-            </div>
-
-            <label className="block">
-              <span className="mb-2 block text-sm text-white/70">简历文本</span>
-              <textarea required value={resumeText} onChange={(event) => handleResumeTextChange(event.target.value)} placeholder="粘贴你的简历文本。它只作为项目上下文草稿，最终以你确认的项目事实为准。" className="min-h-32 w-full resize-y rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-paper outline-none transition placeholder:text-white/25 focus:border-signal/70" />
-            </label>
-
-            <div className="mt-5 rounded-2xl border border-ember/25 bg-ember/[0.05] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-paper">让 AI 识别 Agent 项目</p>
-                  <p className="mt-1 text-xs leading-5 text-white/45">点击分析后，完整简历文本将发送给硅基流动。</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleAnalyze}
-                  disabled={!resumeId || !resumeText.trim() || analyzing || busy || uploading}
-                  className="rounded-xl bg-ember px-3 py-2 text-xs font-semibold text-white transition hover:bg-ember/90 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {analyzing ? "分析中…" : analysisResult ? "重新分析" : "使用 AI 分析"}
-                </button>
-              </div>
-              {analyzing && <p className="mt-3 text-xs text-signal">{analysisStage}</p>}
-              {!resumeId && <p className="mt-3 text-xs text-amber-200/75">请先上传 PDF 或 DOCX，解析完成后才能分析。</p>}
-            </div>
-
-            {analysisResult && (
-              <section className="mt-5 rounded-2xl border border-signal/25 bg-signal/[0.04] p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-signal">AI Analysis Draft</p>
-                    <h3 className="mt-1 text-lg font-semibold text-paper">已识别：{project.project_name || "未命名项目"}</h3>
-                  </div>
-                  <span className="rounded-full border border-signal/35 px-2.5 py-1 text-xs text-signal">置信度 {Math.round(analysisResult.confidence * 100)}%</span>
-                </div>
-                <p className="mt-3 text-sm leading-6 text-white/65">{analysisResult.selection_reason}</p>
-                {analysisResult.missing_information.length > 0 && (
-                  <div className="mt-3 rounded-xl border border-amber-200/20 bg-amber-200/[0.05] p-3 text-xs leading-5 text-amber-100">
-                    <span className="font-semibold">待补充：</span>{analysisResult.missing_information.join("；")}
+                {analyzing && (
+                  <div className="signal-progress" aria-live="polite">
+                    <div className="signal-progress-line" />
+                    <span className="signal-progress-label">{analysisStage}</span>
                   </div>
                 )}
-                <div className="mt-4 space-y-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">个性化项目题</p>
-                  {projectQuestions.map((question, index) => (
-                    <div key={index} className="rounded-xl border border-white/10 bg-black/15 p-3">
-                      <label className="block">
-                        <span className="mb-1.5 block text-xs text-white/50">项目题 {index + 1}</span>
-                        <textarea
-                          required
-                          value={question.prompt}
-                          onChange={(event) => updateProjectQuestion(index, { prompt: event.target.value })}
-                          className="min-h-20 w-full resize-y rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm leading-6 text-paper outline-none focus:border-signal/70"
-                        />
-                      </label>
-                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                        <input
-                          value={question.knowledge_point_id}
-                          onChange={(event) => updateProjectQuestion(index, { knowledge_point_id: event.target.value })}
-                          placeholder="知识点 ID"
-                          className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-paper outline-none focus:border-signal/70"
-                        />
-                        <input
-                          value={question.signals.join("、")}
-                          onChange={(event) => updateProjectQuestion(index, { signals: event.target.value.split(/[、,，]/).map((signal) => signal.trim()).filter(Boolean) })}
-                          placeholder="答题信号，用顿号分隔"
-                          className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-paper outline-none focus:border-signal/70"
-                        />
+                {!resumeId && <p className="signal-note">上传 PDF 或 DOCX 后，可以自动整理项目内容；也可以直接手动填写。</p>}
+              </section>
+
+              {analysisResult && (
+                <section className="signal-section" aria-labelledby="analysis-result-heading">
+                  <h2 id="analysis-result-heading" className="signal-section-label">整理结果</h2>
+                  <div className="signal-panel signal-analysis">
+                    <div className="signal-analysis-summary">
+                      <div>
+                        <p className="signal-analysis-title">已找到：{project.project_name || "未命名项目"}</p>
+                        <p className="signal-note">{analysisResult.selection_reason}</p>
                       </div>
+                      <span className="signal-tag">参考程度 {Math.round(analysisResult.confidence * 100)}%</span>
                     </div>
+                    {analysisResult.missing_information.length > 0 && (
+                      <p className="signal-note">还需要补充：{analysisResult.missing_information.join("；")}</p>
+                    )}
+                    <div className="signal-analysis-list">
+                      {projectQuestions.map((question, index) => (
+                        <div key={index} className="signal-field">
+                          <label className="signal-field-label" htmlFor={`project-question-${index}`}>项目问题 {index + 1}</label>
+                          <textarea
+                            id={`project-question-${index}`}
+                            required
+                            value={question.prompt}
+                            onChange={(event) => updateProjectQuestion(index, { prompt: event.target.value })}
+                            className="signal-textarea"
+                          />
+                          <div className="signal-field-grid">
+                            <input
+                              value={question.knowledge_point_id}
+                              onChange={(event) => updateProjectQuestion(index, { knowledge_point_id: event.target.value })}
+                              placeholder="考察点"
+                              className="signal-textarea"
+                              aria-label={`项目问题 ${index + 1} 考察点`}
+                            />
+                            <input
+                              value={question.signals.join("、")}
+                              onChange={(event) => updateProjectQuestion(index, { signals: event.target.value.split(/[、,，]/).map((signal) => signal.trim()).filter(Boolean) })}
+                              placeholder="回答时可以提到的内容"
+                              className="signal-textarea"
+                              aria-label={`项目问题 ${index + 1} 回答提示`}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {analysisResult.evidence.length > 0 && (
+                      <details className="signal-details">
+                        <summary>查看简历中的依据</summary>
+                        {analysisResult.evidence.map((item, index) => <p key={index}><strong>{homeCopy.projectFields[item.field]}</strong>：{item.quote}</p>)}
+                      </details>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              <section className="signal-section" aria-labelledby="project-heading">
+                <h2 id="project-heading" className="signal-section-label">{homeCopy.projectSection}</h2>
+                <div className="signal-field-grid">
+                  {fields.map((field) => (
+                    <label key={field.key} className={`signal-field ${field.key === "project_name" ? "signal-field--wide" : ""}`}>
+                      <span className="signal-field-label">{homeCopy.projectFields[field.key]}</span>
+                      <textarea
+                        required={field.key !== "quantified_results"}
+                        rows={field.key === "project_name" ? 1 : 3}
+                        value={project[field.key]}
+                        onChange={(event) => setProject((current) => ({ ...current, [field.key]: event.target.value }))}
+                        placeholder={field.hint}
+                        className="signal-textarea"
+                      />
+                    </label>
                   ))}
                 </div>
-                {analysisResult.evidence.length > 0 && (
-                  <details className="mt-4 text-xs text-white/45">
-                    <summary className="cursor-pointer text-white/60">查看模型引用证据</summary>
-                    <ul className="mt-2 space-y-1.5 pl-4">
-                      {analysisResult.evidence.map((item, index) => <li key={index}><span className="text-signal">{item.field}</span>：{item.quote}</li>)}
-                    </ul>
-                  </details>
-                )}
               </section>
-            )}
 
-            <div className="mt-7 grid gap-4 sm:grid-cols-2">
-              {fields.map((field) => (
-                <label key={field.key} className={field.key === "project_name" ? "sm:col-span-2" : ""}>
-                  <span className="mb-2 block text-sm text-white/70">{field.label}</span>
-                  <textarea required={field.key !== "quantified_results"} rows={field.key === "project_name" ? 1 : 2} value={project[field.key]} onChange={(event) => setProject((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.hint} className="w-full resize-y rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm leading-6 text-paper outline-none transition placeholder:text-white/25 focus:border-signal/70" />
-                </label>
-              ))}
-            </div>
-
-            {error && <p className="mt-5 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</p>}
-            <button type="submit" disabled={busy || uploading || analyzing} className="mt-7 flex w-full items-center justify-between rounded-xl bg-paper px-5 py-4 text-left font-semibold text-ink transition hover:bg-white disabled:cursor-wait disabled:opacity-60"><span>{busy ? "正在保存项目并生成问题…" : "确认项目，开始面试"}</span><span className="text-xl">↗</span></button>
-            <p className="mt-4 text-center text-xs leading-5 text-white/35">回答会先保存到本地数据库，再生成本题评估。</p>
-          </form>
-        </section>
+              {error && <p className="signal-alert" role="alert">{error}</p>}
+              <div className="signal-actions signal-actions--between">
+                <p className="signal-note">内容保存在本机，确认后才会进入答题。</p>
+                <button type="submit" aria-label="确认项目，开始面试" disabled={busy || uploading || analyzing} className="signal-button signal-button--primary">
+                  {busy ? "正在保存…" : homeCopy.confirm}
+                </button>
+              </div>
+              <p className="signal-footer">回答会先保存，全部答完后再生成本场报告。自动整理时，完整简历文本将发送给硅基流动。</p>
+            </form>
+          </section>
+        </div>
       </div>
     </main>
   );

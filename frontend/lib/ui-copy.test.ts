@@ -21,3 +21,11 @@ const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8")
 for (const token of ["#182438", "#E9EDF2", "#F8FAFB", "#2F57D1", "#FF7043", "prefers-reduced-motion"]) {
   if (!css.toUpperCase().includes(token.toUpperCase())) throw new Error(`missing visual token: ${token}`);
 }
+
+const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+for (const token of ["homeCopy", "准备进度", "确认项目，开始面试"]) {
+  if (!homePage.includes(token)) throw new Error(`home page missing: ${token}`);
+}
+for (const token of ["Evidence Rail", "冻结事实", "模型引用证据"]) {
+  if (homePage.includes(token)) throw new Error(`home page leaked: ${token}`);
+}
