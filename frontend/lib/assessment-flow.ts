@@ -6,3 +6,9 @@ export const assessmentStages = [
 ] as const;
 
 export type AssessmentStage = (typeof assessmentStages)[number];
+
+const retryableAssessmentStatuses = new Set(["pending", "invalid", "rejected"]);
+
+export function isAssessmentRetryable(status: string) {
+  return retryableAssessmentStatuses.has(status);
+}

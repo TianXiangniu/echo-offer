@@ -1,5 +1,5 @@
 import type { AssessmentBatchResponse, AssessmentResult, RubricObservation } from "./api";
-import { assessmentStages } from "./assessment-flow";
+import { assessmentStages, isAssessmentRetryable } from "./assessment-flow";
 
 const rubricObservation: RubricObservation = {
   rubric_id: "mechanism",
@@ -39,4 +39,8 @@ if (batchResponse.evaluated_count !== 2) {
 
 if (assessmentStages.length !== 4 || assessmentStages[1] !== "请求模型") {
   throw new Error("batch assessment stage contract failed");
+}
+
+if (!isAssessmentRetryable("pending") || isAssessmentRetryable("valid")) {
+  throw new Error("batch assessment retry contract failed");
 }

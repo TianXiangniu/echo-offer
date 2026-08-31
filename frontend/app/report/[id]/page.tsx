@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { getReport, Report } from "@/lib/api";
+import { assessSession, getReport, Report } from "@/lib/api";
+import { isAssessmentRetryable } from "@/lib/assessment-flow";
 
 const levelLabels: Record<string, string> = { "0": "无有效内容", "1": "名词层", "2": "基本理解", "3": "场景分析", "4": "深入权衡" };
 
@@ -26,10 +27,29 @@ export default function ReportPage() {
   const router = useRouter();
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState("");
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     getReport(params.id).then(setReport).catch((caught) => setError(caught instanceof Error ? caught.message : "无法读取报告。"));
   }, [params.id]);
+
+  async function retryAssessment() {
+    setRetrying(true);
+    setError("");
+    try {
+      const result = await assessSession(params.id);
+      if (result.status !== "valid") {
+        const reason = result.assessments.find((item) => item.assessment.error_reason)?.assessment.error_reason;
+        setError(reason ?? "评估未完成，请稍后重试。");
+        return;
+      }
+      setReport(await getReport(params.id));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "评估失败，请稍后重试。");
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   if (error) return <main className="grid min-h-screen place-items-center bg-paper px-6 text-center text-ink"><div><p className="text-red-700">{error}</p><button onClick={() => router.push("/")} className="mt-6 rounded-xl bg-ink px-5 py-3 text-paper">返回首页</button></div></main>;
   if (!report) return <main className="grid min-h-screen place-items-center bg-paper text-ink">正在整理你的报告…</main>;
@@ -43,7 +63,7 @@ export default function ReportPage() {
           <div className="grid gap-4 sm:grid-cols-3"><div className="rounded-3xl bg-ink p-5 text-paper"><p className="text-xs text-white/50">完成度</p><p className="mt-5 font-display text-4xl">{report.completion.completed}<span className="text-xl text-white/40">/{report.completion.total}</span></p><p className="mt-2 text-xs text-white/50">已记录首答</p></div><div className="rounded-3xl border border-ink/10 bg-white/65 p-5"><p className="text-xs text-ink/50">覆盖率</p><p className="mt-5 font-display text-4xl">{percent(report.coverage)}</p><p className="mt-2 text-xs text-ink/50">不是综合分数</p></div><div className="rounded-3xl border border-ink/10 bg-white/65 p-5"><p className="text-xs text-ink/50">锚题</p><p className="mt-5 font-display text-4xl">{report.anchor_coverage.answered}<span className="text-xl text-ink/30">/{report.anchor_coverage.total}</span></p><p className="mt-2 text-xs text-ink/50">跨场比较基础</p></div></div>
         </section>
 
-        {report.assessment_status_counts && <section className="border-t border-ink/10 py-8"><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs uppercase tracking-[0.2em] text-signal">Assessment state</p><h2 className="mt-2 font-display text-3xl">评估状态</h2></div><p className="text-sm text-ink/45">未完成或无效的评估不会进入有效证据统计。</p></div><div className="mt-5 flex flex-wrap gap-3">{Object.entries(report.assessment_status_counts).map(([status, count]) => <span key={status} className="rounded-full border border-ink/10 bg-white/60 px-4 py-2 text-sm text-ink/65">{status}：{count}</span>)}</div></section>}
+        {report.assessment_status_counts && <section className="border-t border-ink/10 py-8"><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs uppercase tracking-[0.2em] text-signal">Assessment state</p><h2 className="mt-2 font-display text-3xl">评估状态</h2></div><div className="flex items-center gap-4"><p className="text-sm text-ink/45">未完成或无效的评估不会进入有效证据统计。</p>{Object.entries(report.assessment_status_counts).some(([status, count]) => count > 0 && isAssessmentRetryable(status)) && <button type="button" onClick={() => void retryAssessment()} disabled={retrying} className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">{retrying ? "评估中…" : "重新生成评估"}</button>}</div></div><div className="mt-5 flex flex-wrap gap-3">{Object.entries(report.assessment_status_counts).map(([status, count]) => <span key={status} className="rounded-full border border-ink/10 bg-white/60 px-4 py-2 text-sm text-ink/65">{status}：{count}</span>)}</div></section>}
 
         {report.rubric_items && <section className="border-t border-ink/10 py-10"><div className="mb-5"><p className="text-xs uppercase tracking-[0.2em] text-signal">Rubric evidence</p><h2 className="mt-2 font-display text-3xl">每项评分对应的证据</h2></div><RubricEvidenceList items={report.rubric_items} /></section>}
 
