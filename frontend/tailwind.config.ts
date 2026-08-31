@@ -5,10 +5,12 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#16151f",
-        paper: "#f6f1e8",
-        signal: "#6d5dfc",
-        ember: "#e57a44"
+        ink: "var(--color-navy)",
+        paper: "var(--color-content)",
+        signal: "var(--color-blue)",
+        ember: "var(--color-orange)",
+        "cool-gray": "var(--color-cool-gray)",
+        line: "var(--color-line)"
       },
       fontFamily: {
         display: ["var(--font-display)", "sans-serif"],
