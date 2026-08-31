@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import {
   AgentProjectAnalysis,
-  analyzeAgentProject,
+  analyzeAgentProjectStream,
   createProfile,
   createSession,
   parseResume,
@@ -49,11 +49,13 @@ export default function HomePage() {
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analysisStage, setAnalysisStage] = useState("等待开始");
 
   function clearAnalysis() {
     setAnalysisId(undefined);
     setAnalysisResult(undefined);
     setProjectQuestions([]);
+    setAnalysisStage("等待开始");
   }
 
   async function handleResumeUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -97,14 +99,18 @@ export default function HomePage() {
     if (!window.confirm("完整简历文本将发送给硅基流动用于项目分析，是否继续？")) return;
 
     setAnalyzing(true);
+    setAnalysisStage("准备分析…");
     setError("");
     try {
-      const result = await analyzeAgentProject(resumeId, resumeText);
+      const result = await analyzeAgentProjectStream(resumeId, resumeText, (event) => {
+        if (event.event === "stage") setAnalysisStage(event.data.message);
+      });
       setAnalysisId(result.analysis_id);
       setAnalysisResult(result);
       setProject(result.project);
       setProjectQuestions(result.questions);
     } catch (caught) {
+      setAnalysisStage("分析失败，可重试");
       setError(caught instanceof Error ? caught.message : "AI 分析失败，请稍后重试。");
     } finally {
       setAnalyzing(false);
@@ -225,6 +231,7 @@ export default function HomePage() {
                   {analyzing ? "分析中…" : analysisResult ? "重新分析" : "使用 AI 分析"}
                 </button>
               </div>
+              {analyzing && <p className="mt-3 text-xs text-signal">{analysisStage}</p>}
               {!resumeId && <p className="mt-3 text-xs text-amber-200/75">请先上传 PDF 或 DOCX，解析完成后才能分析。</p>}
             </div>
 
