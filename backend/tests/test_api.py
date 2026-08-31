@@ -525,6 +525,19 @@ def submit_all_batch_answers(client, session_id, questions):
         assert response.status_code == 200
 
 
+def submit_batch_status(client, session_id, question, index, status, answer_text):
+    response = client.post(
+        f"/api/sessions/{session_id}/answers",
+        json={
+            "question_id": question["id"],
+            "client_submission_id": f"batch-status-{index}",
+            "status": status,
+            "answer_text": answer_text,
+        },
+    )
+    assert response.status_code == 200
+
+
 def test_answer_submission_does_not_call_ai(ai_client, ai_session_context):
     session_id, questions = ai_session_context
 
@@ -577,3 +590,48 @@ def test_repeating_valid_batch_does_not_call_ai(ai_client, ai_session_context):
     assert second.status_code == 200
     assert second.json()["status"] == "valid"
     assert ai_client.app.state.assessment_provider.batch_calls == 1
+
+
+def test_explicit_unknown_is_level_zero_and_skipped_is_not_scored(
+    ai_client, ai_session_context
+):
+    session_id, questions = ai_session_context
+    submit_batch_status(ai_client, session_id, questions[0], 1, "explicit_unknown", "不知道")
+    submit_batch_status(ai_client, session_id, questions[1], 2, "skipped", "")
+    for index, question in enumerate(questions[2:], start=3):
+        submit_batch_status(
+            ai_client,
+            session_id,
+            question,
+            index,
+            "submitted",
+            f"第 {index} 题回答：说明机制、边界和工程取舍。",
+        )
+
+    response = ai_client.post(f"/api/sessions/{session_id}/assessment")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "valid"
+    assert response.json()["evaluated_count"] == len(questions) - 1
+    assert response.json()["assessments"][0]["assessment"]["level"] == 0
+    assert ai_client.app.state.assessment_provider.batch_calls == 1
+
+
+def test_failed_batch_preserves_answers_and_retry_reuses_them(
+    failing_ai_client, failing_ai_session_context
+):
+    session_id, questions = failing_ai_session_context
+    submit_all_batch_answers(failing_ai_client, session_id, questions)
+
+    first = failing_ai_client.post(f"/api/sessions/{session_id}/assessment")
+    second = failing_ai_client.post(f"/api/sessions/{session_id}/assessment")
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "pending"
+    assert second.json()["status"] == "valid"
+    assert second.json()["evaluated_count"] == len(questions)
+    assert failing_ai_client.app.state.assessment_provider.batch_calls == 2
+    with failing_ai_client.app.state.session_factory() as db:
+        from app.models import AnswerAttempt
+
+        assert len(list(db.scalars(select(AnswerAttempt)))) == len(questions)
