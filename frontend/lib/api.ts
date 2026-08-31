@@ -89,6 +89,27 @@ export type Observation = {
   validity: string;
 };
 
+export type RubricObservation = {
+  rubric_id: string;
+  level: number;
+  evidence_start: number;
+  evidence_end: number;
+  quoted_text: string;
+  confidence: number;
+  validity: "valid" | "invalid" | string;
+  invalid_reason?: string | null;
+};
+
+export type AssessmentResult = {
+  status: "pending" | "valid" | "invalid" | "rejected" | string;
+  evaluator: string;
+  level?: number | null;
+  confidence?: number | null;
+  error_code?: string | null;
+  error_reason?: string | null;
+  rubric_items: RubricObservation[];
+};
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -255,7 +276,11 @@ export function getSession(sessionId: string) {
 }
 
 export function submitAnswer(sessionId: string, input: AnswerInput) {
-  return request<{ answer: Record<string, string>; observation: Observation | null }>(
+  return request<{
+    answer: Record<string, string>;
+    observation: Observation | null;
+    assessment: AssessmentResult | null;
+  }>(
     `/api/sessions/${sessionId}/answers`,
     { method: "POST", body: JSON.stringify(input) },
   );
@@ -272,6 +297,15 @@ export type Report = {
   valid_evidence_count: number;
   confidence: number;
   evaluator: string;
+  assessment_status_counts?: Record<string, number>;
+  rubric_items?: Array<{
+    question_id: string;
+    knowledge_point_id: string;
+    rubric_id: string;
+    level: number;
+    confidence: number;
+    evidence: string;
+  }>;
 };
 
 export function getReport(sessionId: string) {

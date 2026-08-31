@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { ApiError, getSession, SessionView, submitAnswer } from "@/lib/api";
+import { ApiError, AssessmentResult, getSession, SessionView, submitAnswer } from "@/lib/api";
 
 function newSubmissionId() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -20,6 +20,9 @@ export default function InterviewPage() {
   const [submissionId, setSubmissionId] = useState(newSubmissionId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [assessment, setAssessment] = useState<AssessmentResult | null>(null);
+  const [canRetryAssessment, setCanRetryAssessment] = useState(false);
+  const [retryStatus, setRetryStatus] = useState<"submitted" | "explicit_unknown" | "skipped">("submitted");
 
   async function loadSession() {
     try {
@@ -44,7 +47,15 @@ export default function InterviewPage() {
     setBusy(true);
     setError("");
     try {
-      await submitAnswer(sessionId, { question_id: question.id, client_submission_id: submissionId, status, answer_text: status === "explicit_unknown" ? "不知道" : answerText });
+      const result = await submitAnswer(sessionId, { question_id: question.id, client_submission_id: submissionId, status, answer_text: status === "explicit_unknown" ? "不知道" : answerText });
+      setAssessment(result.assessment);
+      if (result.assessment && result.assessment.status !== "valid") {
+        setCanRetryAssessment(true);
+        setRetryStatus(status);
+        setError(result.assessment.error_reason ?? "AI 评分未完成，请使用同一次提交重试。");
+        return;
+      }
+      setCanRetryAssessment(false);
       setAnswerText("");
       setSubmissionId(newSubmissionId());
       const next = await getSession(sessionId);
@@ -68,12 +79,14 @@ export default function InterviewPage() {
   return (
     <main className="min-h-screen bg-paper text-ink">
       <div className="mx-auto max-w-6xl px-5 py-7 sm:px-10">
-        <header className="flex items-center justify-between border-b border-ink/10 pb-6"><button onClick={() => router.push("/")} className="font-display text-xl">Agent Echo</button><div className="text-right text-xs text-ink/50"><span className="block uppercase tracking-[0.2em]">Unprompted interview</span><span>本地 · 不使用模型 API</span></div></header>
+        <header className="flex items-center justify-between border-b border-ink/10 pb-6"><button onClick={() => router.push("/")} className="font-display text-xl">Agent Echo</button><div className="text-right text-xs text-ink/50"><span className="block uppercase tracking-[0.2em]">Unprompted interview</span><span>AI 盲评分 · 证据可回溯</span></div></header>
         {error && <div className="mt-6 rounded-2xl border border-red-700/20 bg-red-50 px-5 py-4 text-sm text-red-800">{error}</div>}
+        {assessment?.status === "valid" && assessment.level !== null && assessment.level !== undefined && <div className="mt-6 rounded-2xl border border-signal/20 bg-signal/5 px-5 py-4 text-sm text-ink/70">最近一次 AI 评分：等级 <strong className="text-signal">{assessment.level}</strong> · 置信度 {Math.round((assessment.confidence ?? 0) * 100)}%</div>}
+        {assessment && assessment.status !== "valid" && canRetryAssessment && <div className="mt-6 flex items-center justify-between gap-4 rounded-2xl border border-ember/30 bg-ember/5 px-5 py-4 text-sm text-ink/70"><span>回答已保存，AI 评分状态：{assessment.status}。</span><button type="button" onClick={() => void handleAnswer(retryStatus)} disabled={busy} className="rounded-xl bg-ink px-4 py-2 font-semibold text-paper disabled:opacity-50">重试评分</button></div>}
         {session && question ? (
           <section className="grid gap-10 pb-20 pt-10 lg:grid-cols-[0.35fr_0.65fr] lg:gap-20 lg:pt-16">
             <aside><p className="text-xs font-semibold uppercase tracking-[0.22em] text-signal">Session / {session.session_id.slice(0, 8)}</p><p className="mt-7 font-display text-6xl font-semibold">{String(question.order).padStart(2, "0")}</p><p className="mt-2 text-ink/50">共 {session.progress.total} 道问题</p><div className="mt-8 h-2 overflow-hidden rounded-full bg-ink/10"><div className="h-full rounded-full bg-signal transition-all" style={{ width: `${Math.max(progressRatio, 4)}%` }} /></div><div className="mt-3 flex justify-between text-xs text-ink/50"><span>已完成 {session.progress.completed}</span><span>剩余 {session.progress.total - session.progress.completed}</span></div><div className="mt-12 rounded-2xl border border-ink/10 bg-white/50 p-5 text-sm leading-7 text-ink/60"><p className="font-semibold text-ink">作答提示</p><p className="mt-2">先说结论，再解释机制、边界和工程取舍。训练阶段的辅助回答不会覆盖这次首答记录。</p></div></aside>
-            <form onSubmit={handleSubmit}><div className="flex flex-wrap items-center gap-3 text-sm text-ink/55"><span className="rounded-full bg-signal/10 px-3 py-1.5 font-semibold text-signal">{categoryLabels[question.category]}</span>{question.is_anchor && <span className="rounded-full border border-ember/40 px-3 py-1.5 text-ember">锚题 · 无提示</span>}</div><h1 className="mt-7 max-w-3xl font-display text-4xl font-semibold leading-tight sm:text-6xl">{question.prompt}</h1><p className="mt-5 text-sm text-ink/45">这是你的无提示首答。回答会原样保存，并在报告中保留可回溯证据。</p><textarea value={answerText} onChange={(event) => setAnswerText(event.target.value)} placeholder="从你的实际项目出发，写下你会如何回答……" className="mt-9 min-h-64 w-full resize-y rounded-3xl border border-ink/15 bg-white/65 p-6 text-base leading-8 text-ink outline-none transition placeholder:text-ink/25 focus:border-signal" /><div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-3"><button type="button" disabled={busy} onClick={() => void handleAnswer("explicit_unknown")} className="rounded-xl border border-ink/15 px-4 py-3 text-sm text-ink/65 transition hover:border-ink/40 disabled:opacity-50">我不知道</button><button type="button" disabled={busy} onClick={() => void handleAnswer("skipped")} className="rounded-xl border border-ink/15 px-4 py-3 text-sm text-ink/65 transition hover:border-ink/40 disabled:opacity-50">跳过</button></div><button type="submit" disabled={busy} className="rounded-xl bg-ink px-6 py-3.5 font-semibold text-paper transition hover:bg-signal disabled:cursor-wait disabled:opacity-50">{busy ? "保存中…" : "提交首答  ↗"}</button></div></form>
+            <form onSubmit={handleSubmit}><div className="flex flex-wrap items-center gap-3 text-sm text-ink/55"><span className="rounded-full bg-signal/10 px-3 py-1.5 font-semibold text-signal">{categoryLabels[question.category]}</span>{question.is_anchor && <span className="rounded-full border border-ember/40 px-3 py-1.5 text-ember">锚题 · 无提示</span>}</div><h1 className="mt-7 max-w-3xl font-display text-4xl font-semibold leading-tight sm:text-6xl">{question.prompt}</h1><p className="mt-5 text-sm text-ink/45">这是你的无提示首答。回答会原样保存，并在报告中保留可回溯证据。</p><textarea value={answerText} onChange={(event) => setAnswerText(event.target.value)} placeholder="从你的实际项目出发，写下你会如何回答……" className="mt-9 min-h-64 w-full resize-y rounded-3xl border border-ink/15 bg-white/65 p-6 text-base leading-8 text-ink outline-none transition placeholder:text-ink/25 focus:border-signal" /><div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-3"><button type="button" disabled={busy} onClick={() => void handleAnswer("explicit_unknown")} className="rounded-xl border border-ink/15 px-4 py-3 text-sm text-ink/65 transition hover:border-ink/40 disabled:opacity-50">我不知道</button><button type="button" disabled={busy} onClick={() => void handleAnswer("skipped")} className="rounded-xl border border-ink/15 px-4 py-3 text-sm text-ink/65 transition hover:border-ink/40 disabled:opacity-50">跳过</button></div><button type="submit" disabled={busy} className="rounded-xl bg-ink px-6 py-3.5 font-semibold text-paper transition hover:bg-signal disabled:cursor-wait disabled:opacity-50">{busy ? "AI 评分中…" : "提交首答  ↗"}</button></div></form>
           </section>
         ) : session ? (
           <section className="mx-auto max-w-xl py-24 text-center"><p className="text-sm uppercase tracking-[0.2em] text-signal">Interview complete</p><h1 className="mt-4 font-display text-4xl">这场面试已经完成。</h1><button onClick={() => router.push(`/report/${sessionId}`)} className="mt-8 rounded-xl bg-ink px-6 py-3 font-semibold text-paper">查看报告</button></section>

@@ -181,3 +181,4 @@ class ReportResponse(BaseModel):
     confidence: float
     evaluator: str
     assessment_status_counts: dict[str, int] = Field(default_factory=dict)
+    rubric_items: list[dict] = Field(default_factory=list)

@@ -842,6 +842,7 @@ def get_report(db: Session, session_id: str) -> dict:
     strengths = []
     gaps = []
     distribution = {str(level): 0 for level in range(5)}
+    rubric_items = []
     report_observations = []
     legacy_observations = list(
         db.scalars(
@@ -863,6 +864,27 @@ def get_report(db: Session, session_id: str) -> dict:
                     RubricObservation.validity == "valid",
                 )
                 .order_by(RubricObservation.confidence.desc())
+            )
+            valid_items = list(
+                db.scalars(
+                    select(RubricObservation)
+                    .where(
+                        RubricObservation.assessment_run_id == run.id,
+                        RubricObservation.validity == "valid",
+                    )
+                    .order_by(RubricObservation.rubric_id)
+                )
+            )
+            rubric_items.extend(
+                {
+                    "question_id": answer.question_id,
+                    "knowledge_point_id": by_question[answer.question_id].knowledge_point_id,
+                    "rubric_id": item.rubric_id,
+                    "level": item.level,
+                    "confidence": item.confidence,
+                    "evidence": item.quoted_text,
+                }
+                for item in valid_items
             )
             legacy = next((item for item in legacy_observations if item.answer_id == answer.id), None)
             report_observations.append(
@@ -920,4 +942,5 @@ def get_report(db: Session, session_id: str) -> dict:
         "confidence": average_confidence,
         "evaluator": evaluator,
         "assessment_status_counts": status_counts,
+        "rubric_items": rubric_items,
     }

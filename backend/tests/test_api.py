@@ -479,3 +479,27 @@ def test_invalid_rubric_evidence_is_preserved_but_excluded_from_report(
     report = invalid_ai_client.get(f"/api/sessions/{session_id}/report").json()
     assert report["valid_evidence_count"] == 0
     assert report["assessment_status_counts"]["invalid"] == 1
+
+
+def test_report_exposes_valid_ai_rubric_evidence(ai_client, ai_session_context):
+    session_id, questions = ai_session_context
+    response = ai_client.post(
+        f"/api/sessions/{session_id}/answers",
+        json={
+            "question_id": questions[0]["id"],
+            "client_submission_id": "ai-report-rubric-1",
+            "status": "submitted",
+            "answer_text": "报告应该能够回溯每个 Rubric 项的证据。",
+        },
+    )
+    assert response.status_code == 200
+
+    report = ai_client.get(f"/api/sessions/{session_id}/report").json()
+
+    assert len(report["rubric_items"]) == 4
+    assert {item["rubric_id"] for item in report["rubric_items"]} == {
+        "correctness",
+        "mechanism",
+        "scenario",
+        "engineering",
+    }
