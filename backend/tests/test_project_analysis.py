@@ -191,7 +191,7 @@ def test_siliconflow_provider_uses_timeout_safe_generation_options():
     assert payload["max_tokens"] == 2400
     assert payload["thinking_budget"] == 256
     assert payload["reasoning_effort"] == "high"
-    assert "response_format" not in payload
+    assert payload["response_format"] == {"type": "json_object"}
 
 
 def test_provider_maps_rate_limit_to_stable_error():

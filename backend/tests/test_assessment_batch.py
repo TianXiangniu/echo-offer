@@ -128,6 +128,7 @@ def test_siliconflow_batch_provider_uses_one_http_request():
     request_text = json.dumps(captured["json"], ensure_ascii=False)
     assert "resume_text" not in request_text
     assert "历史画像" not in request_text
+    assert captured["json"]["response_format"] == {"type": "json_object"}
 
 
 def test_batch_persistence_and_response_contract(tmp_path):

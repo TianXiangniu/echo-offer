@@ -220,6 +220,7 @@ class SiliconFlowProjectAnalysisProvider:
             "max_tokens": 2400,
             "thinking_budget": 256,
             "reasoning_effort": "high",
+            "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": build_user_prompt(resume_text)},
@@ -328,6 +329,7 @@ class SiliconFlowAssessmentProvider:
             "model": self._model,
             "temperature": 0.1,
             "max_tokens": 3200,
+            "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
