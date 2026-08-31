@@ -5,7 +5,12 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
-from .providers import AssessmentResult, RubricAssessmentResult
+from .providers import (
+    AssessmentResult,
+    BatchAssessmentCase,
+    BatchAssessmentItem,
+    RubricAssessmentResult,
+)
 from .question_bank import QuestionSpec
 from .rubrics import RubricSnapshot, build_rubric
 
@@ -119,6 +124,83 @@ def parse_model_assessment(
 
     validate_rubric_observations(items, rubric, answer_text)
     return tuple(items)
+
+
+def parse_batch_model_assessment(
+    content: str,
+    cases: Sequence[BatchAssessmentCase],
+    evaluator: str = "siliconflow-blind-rubric-v1",
+) -> tuple[BatchAssessmentItem, ...]:
+    try:
+        payload = json.loads(content)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise AssessmentResponseError("invalid_model_response", "模型返回不是合法 JSON") from exc
+
+    payload = _require_dict(payload, "模型返回必须是 JSON 对象")
+    if set(payload) != {"items"}:
+        raise AssessmentResponseError("invalid_model_response", "批量模型返回包含未允许的字段")
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list):
+        raise AssessmentResponseError("invalid_model_response", "批量模型返回缺少 items 数组")
+
+    expected_keys = {(case.answer_id, case.question_id) for case in cases}
+    if len(expected_keys) != len(cases):
+        raise AssessmentResponseError("invalid_batch_case", "批量评分 case ID 必须唯一")
+
+    actual_keys: set[tuple[str, str]] = set()
+    case_by_key = {(case.answer_id, case.question_id): case for case in cases}
+    results: list[BatchAssessmentItem] = []
+    for raw_item in raw_items:
+        item = _require_dict(raw_item, "批量评分项必须是对象")
+        if set(item) != {"answer_id", "question_id", "rubric_items"}:
+            raise AssessmentResponseError("invalid_model_response", "批量评分项包含未允许的字段")
+        answer_id = item.get("answer_id")
+        question_id = item.get("question_id")
+        if not isinstance(answer_id, str) or not isinstance(question_id, str):
+            raise AssessmentResponseError("invalid_batch_case", "批量评分项缺少有效 case ID")
+        key = (answer_id, question_id)
+        if key in actual_keys or key not in case_by_key:
+            raise AssessmentResponseError("invalid_batch_case", "批量评分 case ID 不完整或重复")
+        actual_keys.add(key)
+        raw_rubric_items = item.get("rubric_items")
+        if not isinstance(raw_rubric_items, list):
+            raise AssessmentResponseError("invalid_rubric", "批量评分项缺少 rubric_items 数组")
+        for raw_rubric_item in raw_rubric_items:
+            if not isinstance(raw_rubric_item, dict):
+                raise AssessmentResponseError("invalid_rubric", "Rubric 项必须是对象")
+            if set(raw_rubric_item) != {
+                "rubric_id",
+                "level",
+                "evidence_start",
+                "evidence_end",
+                "quoted_text",
+                "confidence",
+            }:
+                raise AssessmentResponseError("invalid_model_response", "Rubric 项包含未允许的字段")
+        case = case_by_key[key]
+        rubric_content = json.dumps({"items": raw_rubric_items}, ensure_ascii=False)
+        rubric_items = parse_model_assessment(
+            rubric_content,
+            build_rubric(case.question),
+            case.answer_text,
+        )
+        result = aggregate_assessment(
+            case.question,
+            case.answer_text,
+            rubric_items,
+            evaluator,
+        )
+        results.append(
+            BatchAssessmentItem(
+                answer_id=answer_id,
+                question_id=question_id,
+                result=result,
+            )
+        )
+
+    if actual_keys != expected_keys:
+        raise AssessmentResponseError("invalid_batch_case", "批量模型必须完整返回每个 case")
+    return tuple(results)
 
 
 def aggregate_assessment(
