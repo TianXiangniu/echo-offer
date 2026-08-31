@@ -35,7 +35,12 @@ from .assessment_engine import (
     build_explicit_unknown_assessment,
 )
 from .project_analysis import validate_analysis_evidence
-from .providers import AssessmentProvider, ProjectAnalysisProvider, ProjectAnalysisProviderError
+from .providers import (
+    AssessmentProvider,
+    AssessmentProviderError,
+    ProjectAnalysisProvider,
+    ProjectAnalysisProviderError,
+)
 from .question_bank import ProjectQuestionData, QuestionSpec, build_question_specs
 from .rubrics import build_rubric, rubric_from_dict, rubric_to_dict
 from .resume_files import (
@@ -676,6 +681,11 @@ def evaluate_answer(
             run.status = "valid"
             run.aggregate_level = result.level
             run.aggregate_confidence = result.confidence
+        db.commit()
+    except AssessmentProviderError as exc:
+        run.status = "pending"
+        run.error_code = exc.code
+        run.error_reason = str(exc)[:500]
         db.commit()
     except AssessmentResponseError as exc:
         run.status = "rejected"

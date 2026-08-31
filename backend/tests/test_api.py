@@ -457,6 +457,26 @@ def test_provider_error_preserves_answer_and_same_payload_retries(
     assert second.json()["assessment"]["status"] == "valid"
 
 
+def test_provider_error_code_is_preserved(
+    provider_error_ai_client, provider_error_ai_session_context
+):
+    session_id, questions = provider_error_ai_session_context
+    response = provider_error_ai_client.post(
+        f"/api/sessions/{session_id}/answers",
+        json={
+            "question_id": questions[0]["id"],
+            "client_submission_id": "ai-provider-error-1",
+            "status": "submitted",
+            "answer_text": "模型超时后仍然应该保留可重试状态。",
+        },
+    )
+
+    assert response.status_code == 200
+    assessment = response.json()["assessment"]
+    assert assessment["status"] == "pending"
+    assert assessment["error_code"] == "provider_timeout"
+
+
 def test_invalid_rubric_evidence_is_preserved_but_excluded_from_report(
     invalid_ai_client, invalid_ai_session_context
 ):

@@ -4,21 +4,34 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from app.providers import AssessmentResult, RubricAssessmentResult, RuleBasedAssessmentProvider
+from app.providers import (
+    AssessmentProviderError,
+    AssessmentResult,
+    RubricAssessmentResult,
+    RuleBasedAssessmentProvider,
+)
 from app.main import create_app
 from app.rubrics import build_rubric
 
 
 class FakeAssessmentProvider:
-    def __init__(self, failures_remaining: int = 0, invalid: bool = False):
+    def __init__(
+        self,
+        failures_remaining: int = 0,
+        invalid: bool = False,
+        provider_error: AssessmentProviderError | None = None,
+    ):
         self.failures_remaining = failures_remaining
         self.invalid = invalid
+        self.provider_error = provider_error
         self.calls = 0
 
     def assess(self, question, answer_text, status):
         self.calls += 1
         if self.failures_remaining:
             self.failures_remaining -= 1
+            if self.provider_error is not None:
+                raise self.provider_error
             raise RuntimeError("fake provider failure")
 
         answer_hash = hashlib.sha256(answer_text.encode("utf-8")).hexdigest()
@@ -88,6 +101,21 @@ def failing_ai_client(tmp_path):
 
 
 @pytest.fixture
+def provider_error_ai_client(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'ai-provider-error-test.db'}"
+    app = create_app(
+        database_url,
+        upload_root=tmp_path / "uploads",
+        assessment_provider=FakeAssessmentProvider(
+            failures_remaining=1,
+            provider_error=AssessmentProviderError("provider_timeout", "模型请求超时"),
+        ),
+    )
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
 def invalid_ai_client(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'ai-invalid-test.db'}"
     app = create_app(
@@ -137,6 +165,11 @@ def ai_session_context(ai_client):
 @pytest.fixture
 def failing_ai_session_context(failing_ai_client):
     return create_test_session(failing_ai_client)
+
+
+@pytest.fixture
+def provider_error_ai_session_context(provider_error_ai_client):
+    return create_test_session(provider_error_ai_client)
 
 
 @pytest.fixture
