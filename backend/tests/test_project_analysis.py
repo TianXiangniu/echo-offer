@@ -1,3 +1,4 @@
+import asyncio
 import json
 import hashlib
 
@@ -8,9 +9,10 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.models import Resume, ResumeProject, ResumeProjectAnalysis, ResumeProjectQuestion
-from app.project_analysis import clean_model_json, validate_analysis_evidence
+from app.project_analysis import clean_model_json, parse_model_analysis, validate_analysis_evidence
 from app.providers import ProjectAnalysisProviderError, SiliconFlowProjectAnalysisProvider
 from app.schemas import AgentProjectAnalysisResponse
+from app.services import stream_resume_project_analysis
 
 
 def make_pdf_bytes():
@@ -85,6 +87,34 @@ def test_clean_model_json_removes_markdown_fence():
     assert clean_model_json(fence + "json\n{\"ok\": true}\n" + fence) == '{"ok": true}'
 
 
+def test_parse_model_analysis_normalizes_common_deepseek_shape_variants():
+    payload = valid_analysis_payload()
+    payload["project"]["tech_stack"] = ["Python", "FastAPI"]
+    payload["project"]["responsibilities"] = ["负责后端", "负责评估"]
+    payload["project"]["engineering_challenges"] = ["召回质量", "响应延迟"]
+    payload.pop("selection_reason")
+    payload.pop("confidence")
+    payload["evidence"] = payload["evidence"][0]
+    payload["evidence"].pop("field")
+    payload["evidence"]["quote"] = "负责后端"
+    payload["questions"] = [question["prompt"] for question in payload["questions"]]
+
+    result = parse_model_analysis(json.dumps(payload, ensure_ascii=False))
+
+    assert result.project.tech_stack == "Python；FastAPI"
+    assert result.project.responsibilities == "负责后端；负责评估"
+    assert result.project.engineering_challenges == "召回质量；响应延迟"
+    assert result.selection_reason
+    assert result.confidence == 0
+    assert len(result.evidence) == 1
+    assert result.evidence[0].field == "responsibilities"
+    assert [question.knowledge_point_id for question in result.questions] == [
+        "project.ownership_and_context",
+        "project.architecture_tradeoffs",
+        "project.evaluation_and_reproducibility",
+    ]
+
+
 def test_evidence_must_exist_in_resume_text():
     result = AgentProjectAnalysisResponse.model_validate(valid_analysis_payload())
 
@@ -127,6 +157,41 @@ def test_siliconflow_provider_reads_content_from_chat_response():
     assert result.questions[0].knowledge_point_id.startswith("project.")
     assert requests[0].url.path == "/v1/chat/completions"
     assert requests[0].headers["authorization"] == "Bearer test-only"
+
+
+def test_siliconflow_provider_uses_timeout_safe_generation_options():
+    requests = []
+
+    def handler(request: httpx.Request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(valid_analysis_payload(), ensure_ascii=False)
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = SiliconFlowProjectAnalysisProvider(
+        api_key="test-only",
+        model="test-model",
+        base_url="https://api.siliconflow.cn/v1",
+        timeout_seconds=5,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    provider.analyze("简历文本")
+
+    payload = json.loads(requests[0].content)
+    assert payload["max_tokens"] == 2400
+    assert payload["thinking_budget"] == 256
+    assert payload["reasoning_effort"] == "high"
+    assert "response_format" not in payload
 
 
 def test_provider_maps_rate_limit_to_stable_error():
@@ -329,3 +394,108 @@ def test_text_changed_after_analysis_is_saved_with_final_hash(client):
         saved_resume = db.get(Resume, parsed["resume_id"])
         assert saved_project is not None
         assert saved_resume.text_hash == hashlib.sha256(final_text.encode("utf-8")).hexdigest()
+
+
+async def collect_events(generator):
+    return [event async for event in generator]
+
+
+def event_type(event: str) -> str:
+    return event.splitlines()[0].removeprefix("event: ")
+
+
+def event_data(event: str) -> dict:
+    return json.loads(event.splitlines()[1].removeprefix("data: "))
+
+
+def test_stream_resume_project_analysis_emits_ordered_events_and_result(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    provider = FakeProjectAnalysisProvider(
+        result=AgentProjectAnalysisResponse.model_validate(valid_analysis_payload())
+    )
+    db = client.app.state.session_factory()
+    try:
+        events = asyncio.run(
+            collect_events(
+                stream_resume_project_analysis(
+                    db, provider, parsed["resume_id"], "负责检索链路和线上监控"
+                )
+            )
+        )
+    finally:
+        db.close()
+
+    assert [event_type(event) for event in events] == [
+        "stage", "stage", "stage", "stage", "result", "done"
+    ]
+    assert event_data(events[0])["stage"] == "received"
+    assert event_data(events[1])["stage"] == "analyzing"
+    assert event_data(events[2])["stage"] == "validating"
+    assert event_data(events[3])["stage"] == "completed"
+    assert event_data(events[-1])["status"] == "completed"
+    assert event_data(events[-2])["status"] == "draft"
+
+
+class SlowProjectAnalysisProvider(FakeProjectAnalysisProvider):
+    def analyze(self, resume_text):
+        import time
+
+        time.sleep(0.03)
+        return super().analyze(resume_text)
+
+
+def test_stream_resume_project_analysis_emits_heartbeat_while_provider_runs(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    provider = SlowProjectAnalysisProvider(
+        result=AgentProjectAnalysisResponse.model_validate(valid_analysis_payload())
+    )
+    db = client.app.state.session_factory()
+    try:
+        events = asyncio.run(
+            collect_events(
+                stream_resume_project_analysis(
+                    db,
+                    provider,
+                    parsed["resume_id"],
+                    "负责检索链路和线上监控",
+                    heartbeat_interval_seconds=0.01,
+                )
+            )
+        )
+    finally:
+        db.close()
+
+    assert any(event_type(event) == "heartbeat" for event in events)
+    assert event_type(events[-1]) == "done"
+
+
+def test_stream_resume_project_analysis_emits_error_without_result(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    provider = FakeProjectAnalysisProvider(
+        error=ProjectAnalysisProviderError("provider_timeout", "模型请求超时")
+    )
+    db = client.app.state.session_factory()
+    try:
+        events = asyncio.run(
+            collect_events(
+                stream_resume_project_analysis(
+                    db, provider, parsed["resume_id"], "负责检索链路和线上监控"
+                )
+            )
+        )
+    finally:
+        db.close()
+
+    assert event_type(events[-1]) == "error"
+    assert event_data(events[-1])["code"] == "provider_timeout"
+    assert not any(event_type(event) == "result" for event in events)
+    assert not any(event_type(event) == "done" for event in events)

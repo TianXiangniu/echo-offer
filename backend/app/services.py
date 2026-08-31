@@ -1,5 +1,7 @@
+import asyncio
 import hashlib
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from dataclasses import asdict
 from uuid import uuid4
@@ -37,6 +39,7 @@ from .resume_files import (
 )
 from .resume_parsers import ResumeParserRegistry
 from .schemas import AnswerSubmission, ProfileCreate
+from .sse import format_sse_event
 
 
 class NotFoundError(Exception):
@@ -302,6 +305,111 @@ def analyze_resume_project(
         "status": analysis.status,
         **result.model_dump(),
     }
+
+
+async def stream_resume_project_analysis(
+    db: Session,
+    provider: ProjectAnalysisProvider,
+    resume_id: str,
+    resume_text: str,
+    *,
+    heartbeat_interval_seconds: float = 10.0,
+) -> AsyncIterator[str]:
+    resume = db.get(Resume, resume_id)
+    if resume is None:
+        yield format_sse_event(
+            "error", {"code": "resume_not_found", "message": "resume not found"}
+        )
+        return
+    if resume.user_id != LOCAL_USER_ID:
+        yield format_sse_event(
+            "error",
+            {
+                "code": "resume_owner_conflict",
+                "message": "resume does not belong to the current user",
+            },
+        )
+        return
+    if not resume_text.strip():
+        yield format_sse_event(
+            "error", {"code": "resume_text_empty", "message": "简历文本不能为空"}
+        )
+        return
+    if len(resume_text) > MAX_ANALYSIS_RESUME_CHARS:
+        yield format_sse_event(
+            "error", {"code": "resume_text_too_long", "message": "简历文本过长"}
+        )
+        return
+
+    text_hash = hashlib.sha256(resume_text.encode("utf-8")).hexdigest()
+    analysis = ResumeProjectAnalysis(
+        id=str(uuid4()),
+        resume_id=resume.id,
+        user_id=resume.user_id,
+        resume_text_hash=text_hash,
+        model_name=SILICONFLOW_MODEL,
+        provider_name="siliconflow",
+        status="draft",
+        analysis_json="{}",
+    )
+    db.add(analysis)
+    db.flush()
+    yield format_sse_event(
+        "stage", {"stage": "received", "message": "已接收简历"}
+    )
+    yield format_sse_event(
+        "stage", {"stage": "analyzing", "message": "正在分析项目"}
+    )
+
+    task = asyncio.create_task(asyncio.to_thread(provider.analyze, resume_text))
+    try:
+        while not task.done():
+            finished, _ = await asyncio.wait(
+                (task,), timeout=heartbeat_interval_seconds
+            )
+            if not finished:
+                yield format_sse_event("heartbeat", {"stage": "analyzing"})
+
+        result = task.result()
+        yield format_sse_event(
+            "stage", {"stage": "validating", "message": "正在校验证据"}
+        )
+        result = validate_analysis_evidence(result, resume_text)
+        analysis.analysis_json = json.dumps(
+            result.model_dump(), ensure_ascii=False, sort_keys=True
+        )
+        db.commit()
+        response = {
+            "analysis_id": analysis.id,
+            "resume_id": resume.id,
+            "resume_text_hash": text_hash,
+            "status": analysis.status,
+            **result.model_dump(),
+        }
+        yield format_sse_event(
+            "stage", {"stage": "completed", "message": "分析完成"}
+        )
+        yield format_sse_event("result", response)
+        yield format_sse_event("done", {"status": "completed"})
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+    except ProjectAnalysisProviderError as exc:
+        analysis.status = "failed"
+        analysis.error_code = exc.code
+        db.commit()
+        yield format_sse_event("error", {"code": exc.code, "message": str(exc)})
+    except ValueError:
+        analysis.status = "failed"
+        analysis.error_code = "invalid_model_response"
+        db.commit()
+        yield format_sse_event(
+            "error",
+            {
+                "code": "invalid_model_response",
+                "message": "模型返回内容无法确认",
+            },
+        )
 
 
 def create_session(
