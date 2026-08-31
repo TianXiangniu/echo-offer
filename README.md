@@ -2,7 +2,7 @@
 
 Agent 应用工程师 AI 模拟面试平台的本地垂直切片。
 
-当前闭环：PDF/DOCX 简历解析 → AI 识别 Agent 项目 → 用户确认项目与个性化问题 → 8 题面试 → 回答持久化与基础报告。
+当前闭环：PDF/DOCX 简历解析 → AI 识别 Agent 项目 → 用户确认项目与个性化问题 → 8 题面试 → AI 盲评分 → 证据报告。
 
 ## 目录
 
@@ -13,7 +13,7 @@ Agent 应用工程师 AI 模拟面试平台的本地垂直切片。
 
 ## 当前范围
 
-面试保持 8 题：项目题 1～3、Agent 基础题 4～6、可靠性题 7～8；第 1、4、7 题分别是各组锚题。项目题可由硅基流动的 `deepseek-ai/DeepSeek-V4-Flash` 根据完整简历生成，并在用户确认后保存；没有使用 AI 分析时仍可手动填写并使用固定项目题。回答评估仍使用无需 API Key 的本地规则 Provider。
+面试保持 8 题：项目题 1～3、Agent 基础题 4～6、可靠性题 7～8；第 1、4、7 题分别是各组锚题。项目题可由硅基流动的 `deepseek-ai/DeepSeek-V4-Flash` 根据完整简历生成，并在用户确认后保存；没有使用 AI 分析时仍可手动填写并使用固定项目题。提交回答后由 SiliconFlow 盲评分器按冻结 Rubric 分项评分，程序校验证据并聚合 0～4 等级。模型失败时回答仍会保存为待评估状态，不会被伪造为 0 分。
 
 ## 简历文件解析
 
@@ -36,7 +36,7 @@ Copy-Item backend/.env.example backend/.env
 # 然后编辑 backend/.env，填写自己的 SILICONFLOW_API_KEY
 ```
 
-`backend/.env` 已被 Git 忽略，不能提交到仓库。不要把 API Key 写入前端或命令行；如果密钥曾经暴露，应在硅基流动后台撤销并重新生成。
+`backend/.env` 已被 Git 忽略，不能提交到仓库。不要把 API Key 写入前端、日志或 Git；如果密钥曾经暴露，应在硅基流动后台撤销并重新生成。
 
 上传文件保存在 `data/uploads/`，该目录已加入 Git 忽略规则。扫描型 PDF、图片简历和只有图片的 DOCX 暂不支持 OCR，请改用文本粘贴或手动录入。
 
@@ -48,12 +48,38 @@ Copy-Item backend/.env.example backend/.env
 python -m venv backend/.venv
 backend\.venv\Scripts\Activate.ps1
 python -m pip install -r backend/requirements.txt
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "python -m uvicorn app.main:app --reload --port 8000" -WorkingDirectory "$PWD\backend"
 npm --prefix frontend install
 npm --prefix frontend run dev
 ```
 
+首次配置 AI 评分时，复制 `backend/.env.example` 为 `backend/.env`，只在本地填写密钥和模型配置：
+
+```powershell
+Copy-Item backend/.env.example backend/.env
+# 编辑 backend/.env，填写 SILICONFLOW_API_KEY
+```
+
+启动后端时，从项目根目录执行：
+
+```powershell
+python -m uvicorn app.main:app --app-dir backend --reload --port 8000
+```
+
+如果后端使用 8010 端口，启动前设置：
+
+```powershell
+$env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8010"
+```
+
 浏览器访问 `http://localhost:3000`；API 健康检查为 `http://localhost:8000/health`；本地 SQLite 文件为 `data/app.db`。
+
+## AI 评分说明
+
+评估器标识为 `siliconflow-blind-rubric-v1`。它只接收当前问题、冻结 Rubric、允许的参考事实和当前回答，不读取简历原文、历史回答或过去分数。
+
+每道题按 correctness、mechanism、scenario、engineering 四个 Rubric 项评分。程序会校验证据字符区间和回答 SHA-256，再按固定公式聚合为 0～4 等级。报告展示等级、覆盖率、有效证据数、置信度、优势和缺口，不展示未经校准的 0～100 总分。
+
+提交时如果模型超时或网络失败，回答不会丢失；页面会显示评估未完成，并允许用同一个提交 ID 重试。当前阶段暂不包含证据语义相关性验证、技术事实核验、追问器和 AI 评分 SSE。
 
 ## Git 日常更新
 
