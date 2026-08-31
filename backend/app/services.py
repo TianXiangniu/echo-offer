@@ -17,6 +17,7 @@ from .config import (
 )
 from .models import (
     AnswerAttempt,
+    AssessmentRun,
     AssessmentObservation,
     InterviewQuestion,
     InterviewSession,
@@ -26,11 +27,17 @@ from .models import (
     ResumeProject,
     ResumeProjectAnalysis,
     ResumeProjectQuestion,
+    RubricObservation,
     User,
+)
+from .assessment_engine import (
+    AssessmentResponseError,
+    build_explicit_unknown_assessment,
 )
 from .project_analysis import validate_analysis_evidence
 from .providers import AssessmentProvider, ProjectAnalysisProvider, ProjectAnalysisProviderError
 from .question_bank import ProjectQuestionData, QuestionSpec, build_question_specs
+from .rubrics import build_rubric, rubric_from_dict, rubric_to_dict
 from .resume_files import (
     StoredResumeFile,
     ValidatedResumeFile,
@@ -79,6 +86,13 @@ def _signals_from_json(value: str) -> tuple[str, ...]:
 
 
 def _question_spec(question: InterviewQuestion) -> QuestionSpec:
+    rubric_snapshot = None
+    try:
+        payload = json.loads(question.rubric_json or "{}")
+        if payload:
+            rubric_snapshot = rubric_from_dict(payload)
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        rubric_snapshot = None
     return QuestionSpec(
         order=question.order,
         category=question.category,
@@ -87,6 +101,7 @@ def _question_spec(question: InterviewQuestion) -> QuestionSpec:
         knowledge_point_id=question.knowledge_point_id,
         rubric_version=question.rubric_version,
         signals=_signals_from_json(question.signals_json),
+        rubric_snapshot=rubric_snapshot,
     )
 
 
@@ -472,6 +487,7 @@ def create_session(
             knowledge_point_id=spec.knowledge_point_id,
             rubric_version=spec.rubric_version,
             signals_json=json.dumps(spec.signals, ensure_ascii=False),
+            rubric_json=json.dumps(rubric_to_dict(build_rubric(spec)), ensure_ascii=False),
         )
         db.add(question)
         questions.append(question)
@@ -555,10 +571,17 @@ def submit_answer(
     if existing is not None:
         if existing.payload_hash != payload_hash:
             raise ConflictError("client_submission_id was already used with different content")
+        run = _latest_assessment_run(db, existing.id)
+        if (
+            existing.status != "skipped"
+            and run is not None
+            and run.status in {"pending", "invalid", "rejected"}
+        ):
+            run = evaluate_answer(db, existing, question, assessment_provider)
         observation = db.scalar(
             select(AssessmentObservation).where(AssessmentObservation.answer_id == existing.id)
         )
-        return {"answer": _answer_response(existing), "observation": _observation_response(observation)}
+        return _answer_result_response(existing, observation, run, db)
 
     answer_text_hash = hashlib.sha256(payload.answer_text.encode("utf-8")).hexdigest()
     answer = AnswerAttempt(
@@ -575,10 +598,128 @@ def submit_answer(
     db.add(answer)
     db.commit()
 
+    run = None
     observation = None
     if payload.status != "skipped":
-        result = assessment_provider.assess(_question_spec(question), payload.answer_text, payload.status)
-        observation = AssessmentObservation(
+        run = evaluate_answer(db, answer, question, assessment_provider, payload.status)
+        observation = db.scalar(
+            select(AssessmentObservation).where(AssessmentObservation.answer_id == answer.id)
+        )
+
+    session.current_question_index = min(session.total_questions, session.current_question_index + 1)
+    session.session_version += 1
+    if session.current_question_index >= session.total_questions:
+        session.status = "completed"
+    db.commit()
+    return _answer_result_response(answer, observation, run, db)
+
+
+def _latest_assessment_run(db: Session, answer_id: str) -> AssessmentRun | None:
+    return db.scalar(
+        select(AssessmentRun)
+        .where(AssessmentRun.answer_id == answer_id)
+        .order_by(AssessmentRun.attempt_number.desc(), AssessmentRun.created_at.desc())
+    )
+
+
+def evaluate_answer(
+    db: Session,
+    answer: AnswerAttempt,
+    question: InterviewQuestion,
+    assessment_provider: AssessmentProvider,
+    source_status: str | None = None,
+) -> AssessmentRun:
+    source_status = source_status or answer.status
+    question_spec = _question_spec(question)
+    rubric = build_rubric(question_spec)
+    previous = _latest_assessment_run(db, answer.id)
+    attempt_number = previous.attempt_number + 1 if previous is not None else 1
+    evaluator = getattr(assessment_provider, "evaluator", "siliconflow-blind-rubric-v1")
+    run = AssessmentRun(
+        id=str(uuid4()),
+        answer_id=answer.id,
+        question_id=question.id,
+        evaluator=evaluator,
+        rubric_version=rubric.version,
+        status="pending",
+        attempt_number=attempt_number,
+    )
+    db.add(run)
+    db.commit()
+
+    try:
+        if source_status == "explicit_unknown":
+            result = build_explicit_unknown_assessment(
+                question_spec,
+                answer.answer_text,
+                evaluator=evaluator,
+            )
+        else:
+            result = assessment_provider.assess(
+                question_spec,
+                answer.answer_text,
+                source_status,
+            )
+        _persist_rubric_result(db, run, result)
+        if result.rubric_items and all(item.validity == "valid" for item in result.rubric_items):
+            run.status = "valid"
+            run.aggregate_level = result.level
+            run.aggregate_confidence = result.confidence
+            if source_status == "explicit_unknown":
+                _persist_legacy_observation(db, answer, question, result)
+        elif result.rubric_items:
+            run.status = "invalid"
+            run.error_code = "invalid_evidence"
+            run.error_reason = "至少一个 Rubric 证据未通过完整性校验"
+        else:
+            _persist_legacy_observation(db, answer, question, result)
+            run.status = "valid"
+            run.aggregate_level = result.level
+            run.aggregate_confidence = result.confidence
+        db.commit()
+    except AssessmentResponseError as exc:
+        run.status = "rejected"
+        run.error_code = exc.code
+        run.error_reason = str(exc)
+        db.commit()
+    except Exception as exc:
+        run.status = "pending"
+        run.error_code = "system_error"
+        run.error_reason = str(exc)[:500]
+        db.commit()
+    return run
+
+
+def _persist_rubric_result(db: Session, run: AssessmentRun, result) -> None:
+    for item in result.rubric_items:
+        db.add(
+            RubricObservation(
+                id=str(uuid4()),
+                assessment_run_id=run.id,
+                answer_id=run.answer_id,
+                question_id=run.question_id,
+                rubric_id=item.rubric_id,
+                rubric_version=run.rubric_version,
+                level=item.level,
+                evidence_start=item.evidence_start,
+                evidence_end=item.evidence_end,
+                quoted_text=item.quoted_text,
+                answer_text_hash=item.answer_text_hash,
+                confidence=item.confidence,
+                validity=item.validity,
+                invalid_reason=item.invalid_reason,
+            )
+        )
+
+
+def _persist_legacy_observation(
+    db: Session,
+    answer: AnswerAttempt,
+    question: InterviewQuestion,
+    result,
+) -> None:
+    db.add(
+        AssessmentObservation(
             id=str(uuid4()),
             answer_id=answer.id,
             question_id=question.id,
@@ -591,14 +732,20 @@ def submit_answer(
             confidence=result.confidence,
             validity="valid",
         )
-        db.add(observation)
+    )
 
-    session.current_question_index = min(session.total_questions, session.current_question_index + 1)
-    session.session_version += 1
-    if session.current_question_index >= session.total_questions:
-        session.status = "completed"
-    db.commit()
-    return {"answer": _answer_response(answer), "observation": _observation_response(observation)}
+
+def _answer_result_response(
+    answer: AnswerAttempt,
+    observation: AssessmentObservation | None,
+    run: AssessmentRun | None,
+    db: Session,
+) -> dict:
+    return {
+        "answer": _answer_response(answer),
+        "observation": _observation_response(observation),
+        "assessment": _assessment_response(run, db),
+    }
 
 
 def _answer_response(answer: AnswerAttempt) -> dict:
@@ -626,6 +773,39 @@ def _observation_response(observation: AssessmentObservation | None) -> dict | N
     }
 
 
+def _assessment_response(run: AssessmentRun | None, db: Session) -> dict | None:
+    if run is None:
+        return None
+    items = list(
+        db.scalars(
+            select(RubricObservation)
+            .where(RubricObservation.assessment_run_id == run.id)
+            .order_by(RubricObservation.rubric_id)
+        )
+    )
+    return {
+        "status": run.status,
+        "evaluator": run.evaluator,
+        "level": run.aggregate_level,
+        "confidence": run.aggregate_confidence,
+        "error_code": run.error_code,
+        "error_reason": run.error_reason,
+        "rubric_items": [
+            {
+                "rubric_id": item.rubric_id,
+                "level": item.level,
+                "evidence_start": item.evidence_start,
+                "evidence_end": item.evidence_end,
+                "quoted_text": item.quoted_text,
+                "confidence": item.confidence,
+                "validity": item.validity,
+                "invalid_reason": item.invalid_reason,
+            }
+            for item in items
+        ],
+    }
+
+
 def get_report(db: Session, session_id: str) -> dict:
     session = db.get(InterviewSession, session_id)
     if session is None:
@@ -638,38 +818,96 @@ def get_report(db: Session, session_id: str) -> dict:
         )
     )
     answers = list(db.scalars(select(AnswerAttempt).where(AnswerAttempt.session_id == session_id)))
-    observations = list(
+    by_question = {question.id: question for question in questions}
+    completed = len({answer.question_id for answer in answers})
+    anchor_ids = {question.id for question in questions if question.is_anchor}
+    anchor_answered = len({answer.question_id for answer in answers if answer.question_id in anchor_ids})
+    answer_ids = [answer.id for answer in answers]
+    runs = list(
+        db.scalars(
+            select(AssessmentRun)
+            .where(AssessmentRun.answer_id.in_(answer_ids))
+            .order_by(AssessmentRun.attempt_number, AssessmentRun.created_at)
+        )
+    ) if answer_ids else []
+    latest_runs: dict[str, AssessmentRun] = {}
+    for run in runs:
+        latest_runs[run.answer_id] = run
+
+    status_counts = {status: 0 for status in ("pending", "valid", "invalid", "rejected")}
+    for run in latest_runs.values():
+        if run.status in status_counts:
+            status_counts[run.status] += 1
+
+    strengths = []
+    gaps = []
+    distribution = {str(level): 0 for level in range(5)}
+    report_observations = []
+    legacy_observations = list(
         db.scalars(
             select(AssessmentObservation).where(
                 AssessmentObservation.question_id.in_([question.id for question in questions]),
                 AssessmentObservation.validity == "valid",
             )
         )
-    )
-    by_question = {question.id: question for question in questions}
-    completed = len({answer.question_id for answer in answers})
-    anchor_ids = {question.id for question in questions if question.is_anchor}
-    anchor_answered = len({answer.question_id for answer in answers if answer.question_id in anchor_ids})
-    strengths = []
-    gaps = []
-    distribution = {str(level): 0 for level in range(5)}
-    for observation in observations:
-        distribution[str(observation.level)] += 1
+    ) if questions else []
+    for answer in answers:
+        run = latest_runs.get(answer.id)
+        if run is not None:
+            if run.status != "valid" or run.aggregate_level is None:
+                continue
+            evidence = db.scalar(
+                select(RubricObservation)
+                .where(
+                    RubricObservation.assessment_run_id == run.id,
+                    RubricObservation.validity == "valid",
+                )
+                .order_by(RubricObservation.confidence.desc())
+            )
+            legacy = next((item for item in legacy_observations if item.answer_id == answer.id), None)
+            report_observations.append(
+                {
+                    "question_id": answer.question_id,
+                    "level": run.aggregate_level,
+                    "confidence": run.aggregate_confidence or 0.0,
+                    "evidence": evidence.quoted_text if evidence else legacy.quoted_text if legacy else answer.answer_text,
+                }
+            )
+        else:
+            legacy = next((item for item in legacy_observations if item.answer_id == answer.id), None)
+            if legacy is not None:
+                report_observations.append(
+                    {
+                        "question_id": answer.question_id,
+                        "level": legacy.level,
+                        "confidence": legacy.confidence,
+                        "evidence": legacy.quoted_text,
+                    }
+                )
+
+    for observation in report_observations:
+        distribution[str(observation["level"])] += 1
         item = {
-            "knowledge_point_id": by_question[observation.question_id].knowledge_point_id,
-            "level": observation.level,
-            "confidence": observation.confidence,
-            "evidence": observation.quoted_text,
+            "knowledge_point_id": by_question[observation["question_id"]].knowledge_point_id,
+            "level": observation["level"],
+            "confidence": observation["confidence"],
+            "evidence": observation["evidence"],
         }
-        if observation.level >= 3:
+        if observation["level"] >= 3:
             strengths.append(item)
         else:
             gaps.append(item)
     strengths.sort(key=lambda item: item["level"], reverse=True)
     gaps.sort(key=lambda item: item["level"])
     average_confidence = round(
-        sum(observation.confidence for observation in observations) / len(observations), 2
-    ) if observations else 0.0
+        sum(observation["confidence"] for observation in report_observations)
+        / len(report_observations),
+        2,
+    ) if report_observations else 0.0
+    evaluators = {run.evaluator for run in latest_runs.values()}
+    if not evaluators and report_observations:
+        evaluators.add("alpha-local-rule-v1")
+    evaluator = next(iter(evaluators)) if len(evaluators) == 1 else "mixed"
     return {
         "session_id": session_id,
         "completion": {"completed": completed, "total": len(questions)},
@@ -678,7 +916,8 @@ def get_report(db: Session, session_id: str) -> dict:
         "strengths": strengths[:3],
         "gaps": gaps[:3],
         "level_distribution": distribution,
-        "valid_evidence_count": len(observations),
+        "valid_evidence_count": len(report_observations),
         "confidence": average_confidence,
-        "evaluator": "alpha-local-rule-v1",
+        "evaluator": evaluator,
+        "assessment_status_counts": status_counts,
     }

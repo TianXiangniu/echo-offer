@@ -11,6 +11,7 @@ class QuestionSpec:
     knowledge_point_id: str
     rubric_version: str
     signals: tuple[str, ...]
+    rubric_snapshot: object | None = None
 
 
 @dataclass(frozen=True, slots=True)

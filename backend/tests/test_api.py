@@ -413,3 +413,69 @@ def test_report_aggregates_without_uncalibrated_score(client, session_context):
     assert 0 < report["coverage"] < 1
     assert report["valid_evidence_count"] == 2
     assert "score_100" not in report
+
+
+def test_ai_assessment_is_saved_per_rubric_and_aggregated(ai_client, ai_session_context):
+    session_id, questions = ai_session_context
+    response = ai_client.post(
+        f"/api/sessions/{session_id}/answers",
+        json={
+            "question_id": questions[0]["id"],
+            "client_submission_id": "ai-1",
+            "status": "submitted",
+            "answer_text": "我先验证方案，再解释机制，并说明边界和延迟取舍。",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["assessment"]["status"] == "valid"
+    assert body["assessment"]["level"] == 3
+    assert len(body["assessment"]["rubric_items"]) == 4
+
+
+def test_provider_error_preserves_answer_and_same_payload_retries(
+    failing_ai_client, failing_ai_session_context
+):
+    session_id, questions = failing_ai_session_context
+    payload = {
+        "question_id": questions[0]["id"],
+        "client_submission_id": "ai-retry-1",
+        "status": "submitted",
+        "answer_text": "回答必须在模型失败后继续保留。",
+    }
+
+    first = failing_ai_client.post(f"/api/sessions/{session_id}/answers", json=payload)
+    second = failing_ai_client.post(f"/api/sessions/{session_id}/answers", json=payload)
+
+    assert first.status_code == 200
+    assert first.json()["answer"]["answer_text"] == payload["answer_text"]
+    assert first.json()["assessment"]["status"] == "pending"
+    assert first.json()["assessment"]["error_code"] == "system_error"
+    assert second.status_code == 200
+    assert second.json()["answer"]["id"] == first.json()["answer"]["id"]
+    assert second.json()["assessment"]["status"] == "valid"
+
+
+def test_invalid_rubric_evidence_is_preserved_but_excluded_from_report(
+    invalid_ai_client, invalid_ai_session_context
+):
+    session_id, questions = invalid_ai_session_context
+    response = invalid_ai_client.post(
+        f"/api/sessions/{session_id}/answers",
+        json={
+            "question_id": questions[0]["id"],
+            "client_submission_id": "ai-invalid-1",
+            "status": "submitted",
+            "answer_text": "这条回答的证据需要被保留并审计。",
+        },
+    )
+
+    assert response.status_code == 200
+    assessment = response.json()["assessment"]
+    assert assessment["status"] == "invalid"
+    assert any(item["validity"] == "invalid" for item in assessment["rubric_items"])
+
+    report = invalid_ai_client.get(f"/api/sessions/{session_id}/report").json()
+    assert report["valid_evidence_count"] == 0
+    assert report["assessment_status_counts"]["invalid"] == 1

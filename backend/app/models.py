@@ -136,6 +136,7 @@ class InterviewQuestion(Base):
     knowledge_point_id: Mapped[str] = mapped_column(String(120))
     rubric_version: Mapped[str] = mapped_column(String(60))
     signals_json: Mapped[str] = mapped_column(Text)
+    rubric_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
 class AnswerAttempt(Base):
@@ -171,4 +172,47 @@ class AssessmentObservation(Base):
     gaps_json: Mapped[str] = mapped_column(Text, default="[]")
     confidence: Mapped[float] = mapped_column()
     validity: Mapped[str] = mapped_column(String(30), default="valid")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AssessmentRun(Base):
+    __tablename__ = "assessment_runs"
+    __table_args__ = (
+        UniqueConstraint("answer_id", "attempt_number", name="uq_assessment_attempt"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    answer_id: Mapped[str] = mapped_column(ForeignKey("answer_attempts.id"), index=True)
+    question_id: Mapped[str] = mapped_column(ForeignKey("interview_questions.id"), index=True)
+    evaluator: Mapped[str] = mapped_column(String(80))
+    rubric_version: Mapped[str] = mapped_column(String(60))
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    aggregate_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    aggregate_confidence: Mapped[float | None] = mapped_column(nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RubricObservation(Base):
+    __tablename__ = "rubric_observations"
+    __table_args__ = (
+        UniqueConstraint("assessment_run_id", "rubric_id", name="uq_rubric_run_item"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    assessment_run_id: Mapped[str] = mapped_column(ForeignKey("assessment_runs.id"), index=True)
+    answer_id: Mapped[str] = mapped_column(ForeignKey("answer_attempts.id"), index=True)
+    question_id: Mapped[str] = mapped_column(ForeignKey("interview_questions.id"), index=True)
+    rubric_id: Mapped[str] = mapped_column(String(80))
+    rubric_version: Mapped[str] = mapped_column(String(60))
+    level: Mapped[int] = mapped_column(Integer)
+    evidence_start: Mapped[int] = mapped_column(Integer)
+    evidence_end: Mapped[int] = mapped_column(Integer)
+    quoted_text: Mapped[str] = mapped_column(Text)
+    answer_text_hash: Mapped[str] = mapped_column(String(64))
+    confidence: Mapped[float] = mapped_column()
+    validity: Mapped[str] = mapped_column(String(30), default="valid")
+    invalid_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

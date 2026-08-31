@@ -134,9 +134,31 @@ class ObservationResponse(BaseModel):
     validity: str
 
 
+class RubricObservationResponse(BaseModel):
+    rubric_id: str
+    level: int
+    evidence_start: int
+    evidence_end: int
+    quoted_text: str
+    confidence: float
+    validity: str
+    invalid_reason: str | None = None
+
+
+class AssessmentResponse(BaseModel):
+    status: str
+    evaluator: str
+    level: int | None = None
+    confidence: float | None = None
+    error_code: str | None = None
+    error_reason: str | None = None
+    rubric_items: list[RubricObservationResponse] = Field(default_factory=list)
+
+
 class AnswerResponse(BaseModel):
     answer: dict
     observation: ObservationResponse | None
+    assessment: AssessmentResponse | None = None
 
 
 class SessionView(BaseModel):
@@ -158,3 +180,4 @@ class ReportResponse(BaseModel):
     valid_evidence_count: int
     confidence: float
     evaluator: str
+    assessment_status_counts: dict[str, int] = Field(default_factory=dict)

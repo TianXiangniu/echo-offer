@@ -17,6 +17,7 @@ from .config import (
 )
 from .database import create_database, get_db
 from .providers import (
+    AssessmentProvider,
     ProjectAnalysisProvider,
     ProjectAnalysisProviderError,
     RuleBasedAssessmentProvider,
@@ -59,12 +60,13 @@ def create_app(
     database_url: str | None = None,
     upload_root: Path | None = None,
     project_analysis_provider: ProjectAnalysisProvider | None = None,
+    assessment_provider: AssessmentProvider | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Agent Echo API", version=WORKFLOW_VERSION)
     _, session_factory = create_database(database_url or DEFAULT_DATABASE_URL)
     app.state.session_factory = session_factory
     app.state.upload_root = upload_root or DEFAULT_UPLOAD_ROOT
-    app.state.assessment_provider = RuleBasedAssessmentProvider()
+    app.state.assessment_provider = assessment_provider or RuleBasedAssessmentProvider()
     app.state.project_analysis_provider = project_analysis_provider or SiliconFlowProjectAnalysisProvider(
         api_key=SILICONFLOW_API_KEY,
         model=SILICONFLOW_MODEL,
