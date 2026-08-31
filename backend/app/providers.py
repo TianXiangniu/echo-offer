@@ -93,7 +93,9 @@ class SiliconFlowProjectAnalysisProvider:
         payload = {
             "model": self._model,
             "temperature": 0.1,
-            "response_format": {"type": "json_object"},
+            "max_tokens": 2400,
+            "thinking_budget": 256,
+            "reasoning_effort": "high",
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": build_user_prompt(resume_text)},
