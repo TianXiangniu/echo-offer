@@ -208,14 +208,14 @@ export default function HomePage() {
                       type="file"
                       accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                       onChange={handleResumeUpload}
-                      disabled={uploading || busy}
+                      disabled={uploading || busy || analyzing}
                       className="signal-input-hidden"
                     />
                   </label>
                   {resumeSource && !uploading && (
                     <div className="signal-note">
                       {resumeSource.original_filename} · {resumeSource.unit_count}{resumeSource.source_type === "pdf" ? " 页" : " 个文本块"} · {resumeSource.character_count} 字符
-                      <button type="button" onClick={switchToManualResume} className="signal-button signal-button--quiet">改为手动编辑</button>
+                      <button type="button" onClick={switchToManualResume} disabled={analyzing || busy} className="signal-button signal-button--quiet">改为手动编辑</button>
                     </div>
                   )}
                 </div>
@@ -229,6 +229,7 @@ export default function HomePage() {
                   required
                   value={resumeText}
                   onChange={(event) => handleResumeTextChange(event.target.value)}
+                  disabled={analyzing || uploading || busy}
                   placeholder="粘贴你的简历文本。它只作为项目上下文草稿，最终以你确认的项目事实为准。"
                   className="signal-panel signal-textarea"
                   aria-label="简历文本"
@@ -320,6 +321,7 @@ export default function HomePage() {
                         rows={field.key === "project_name" ? 1 : 3}
                         value={project[field.key]}
                         onChange={(event) => setProject((current) => ({ ...current, [field.key]: event.target.value }))}
+                        disabled={analyzing || busy}
                         placeholder={field.hint}
                         className="signal-textarea"
                       />
@@ -330,12 +332,12 @@ export default function HomePage() {
 
               {error && <p className="signal-alert" role="alert">{error}</p>}
               <div className="signal-actions signal-actions--between">
-                <p className="signal-note">内容保存在本机，确认后才会进入答题。</p>
+                <p className="signal-note">确认后的项目内容会进入本场面试。</p>
                 <button type="submit" aria-label="确认项目，开始面试" disabled={busy || uploading || analyzing} className="signal-button signal-button--primary">
                   {busy ? "正在保存…" : homeCopy.confirm}
                 </button>
               </div>
-              <p className="signal-footer">回答会先保存，全部答完后再生成本场报告。自动整理时，完整简历文本将发送给硅基流动。</p>
+              <p className="signal-footer">回答会先保存，全部答完后再生成本场报告。自动整理时，完整简历文本会发送给硅基流动。</p>
             </form>
           </section>
         </div>

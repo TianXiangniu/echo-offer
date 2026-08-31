@@ -22,8 +22,37 @@ const rubricLabels: Record<string, string> = {
   failure_mode: "故障处理",
 };
 
+const knowledgePointLabels: Record<string, string> = {
+  agent_architecture: "Agent 架构",
+  tool_calling: "工具调用",
+  retrieval: "检索与引用",
+  memory: "记忆设计",
+  evaluation: "效果评估",
+  reliability: "工程可靠性",
+  architecture_tradeoffs: "架构取舍",
+};
+
 function percent(value: number) {
   return `${Math.round(value * 100)}%`;
+}
+
+function labelKnowledgePoint(value: string) {
+  if (knowledgePointLabels[value]) return knowledgePointLabels[value];
+  const lastPart = value.split(".").at(-1) ?? value;
+  return lastPart.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function assessmentFailureMessage(result: Awaited<ReturnType<typeof assessSession>>) {
+  const code = result.assessments.find((item) => item.assessment.error_code)?.assessment.error_code;
+  const messages: Record<string, string> = {
+    provider_auth_failed: "评分服务配置有问题，请稍后再试。",
+    provider_rate_limited: "评分服务现在比较忙，请稍后再试。",
+    provider_unavailable: "评分服务暂时不可用，请稍后再试。",
+    invalid_batch_case: "回答已经保存，但这次报告没有生成。可以直接重试。",
+    invalid_evidence: "回答已经保存，但这次报告没有生成。可以直接重试。",
+    system_error: "回答已经保存，但这次报告没有生成。可以直接重试。",
+  };
+  return messages[code ?? ""] ?? "这次没有拿到评分结果。";
 }
 
 function reasonForLevel(level: number, evidence: string) {
@@ -42,7 +71,7 @@ function KnowledgeList({ items, emptyText }: { items: Report["strengths"]; empty
       {items.map((item) => (
         <article key={item.knowledge_point_id} className="signal-report-item">
           <div className="signal-report-item-heading">
-            <h3 className="signal-report-item-title">{item.knowledge_point_id}</h3>
+            <h3 className="signal-report-item-title">{labelKnowledgePoint(item.knowledge_point_id)}</h3>
             <span className="signal-level">等级 {item.level} · {levelLabels[String(item.level)]}</span>
           </div>
           <div className="signal-report-block">
@@ -72,10 +101,21 @@ export default function ReportPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState("");
   const [retrying, setRetrying] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    getReport(params.id).then(setReport).catch((caught) => setError(caught instanceof Error ? caught.message : "无法读取报告。"));
-  }, [params.id]);
+  async function loadReport() {
+    setLoading(true);
+    setError("");
+    try {
+      setReport(await getReport(params.id));
+    } catch {
+      setError("暂时无法读取本场报告，请稍后重试。");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void loadReport(); }, [params.id]);
 
   async function retryAssessment() {
     setRetrying(true);
@@ -83,13 +123,12 @@ export default function ReportPage() {
     try {
       const result = await assessSession(params.id);
       if (result.status !== "valid") {
-        const reason = result.assessments.find((item) => item.assessment.error_reason)?.assessment.error_reason;
-        setError(reason ?? "报告没有生成，请稍后重试。");
+        setError(assessmentFailureMessage(result));
         return;
       }
       setReport(await getReport(params.id));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "报告生成失败，请稍后重试。");
+      setError(caught instanceof Error ? "回答已经保存，但这次报告没有生成。可以直接重试。" : "这次没有拿到评分结果。");
     } finally {
       setRetrying(false);
     }
@@ -100,7 +139,10 @@ export default function ReportPage() {
       <main className="signal-page grid min-h-screen place-items-center px-6">
         <div className="signal-workspace">
           <p className="signal-alert" role="alert">{error}</p>
-          <button type="button" onClick={() => router.push("/")} className="signal-button signal-button--primary" style={{ marginTop: 24 }}>{statusCopy.backHome}</button>
+          <div className="signal-actions" style={{ justifyContent: "flex-start" }}>
+            <button type="button" onClick={() => void loadReport()} disabled={loading} className="signal-button signal-button--primary">{loading ? "正在读取…" : "再试一次"}</button>
+            <button type="button" onClick={() => router.push("/")} className="signal-button signal-button--secondary">{statusCopy.backHome}</button>
+          </div>
         </div>
       </main>
     );
@@ -151,6 +193,14 @@ export default function ReportPage() {
                 <div className="signal-metric"><span className="signal-metric-label">{reportCopy.goodCount}</span><strong className="signal-metric-value">{report.strengths.length}</strong></div>
                 <div className="signal-metric"><span className="signal-metric-label">{reportCopy.improveCount}</span><strong className="signal-metric-value">{report.gaps.length}</strong></div>
               </div>
+              <div className="signal-panel" style={{ padding: 20 }}>
+                <div className="signal-detail-grid">
+                  <div className="signal-detail"><span className="signal-detail-label">回答覆盖</span><strong className="signal-detail-value">{percent(report.coverage)}</strong></div>
+                  <div className="signal-detail"><span className="signal-detail-label">锚题完成</span><strong className="signal-detail-value">{report.anchor_coverage.answered} / {report.anchor_coverage.total}</strong></div>
+                  <div className="signal-detail"><span className="signal-detail-label">可用摘录</span><strong className="signal-detail-value">{report.valid_evidence_count}</strong></div>
+                  <div className="signal-detail"><span className="signal-detail-label">平均参考程度</span><strong className="signal-detail-value">{percent(report.confidence)}</strong></div>
+                </div>
+              </div>
             </section>
 
             {report.rubric_items && (
@@ -161,7 +211,7 @@ export default function ReportPage() {
                   {report.rubric_items.map((item) => (
                     <article key={`${item.question_id}-${item.rubric_id}`} className="signal-report-item">
                       <div className="signal-report-item-heading">
-                        <h3 className="signal-report-item-title">{item.knowledge_point_id} · {rubricLabels[item.rubric_id] ?? "回答表现"}</h3>
+                        <h3 className="signal-report-item-title">{labelKnowledgePoint(item.knowledge_point_id)} · {rubricLabels[item.rubric_id] ?? "回答表现"}</h3>
                         <span className="signal-level">等级 {item.level} / 4</span>
                       </div>
                       <div className="signal-report-block">
@@ -194,6 +244,15 @@ export default function ReportPage() {
                 <h2 id="status-heading" className="signal-section-label">{reportCopy.scoreExplanation}</h2>
                 <div className="signal-panel" style={{ padding: 24 }}>
                   <p className="signal-copy" style={{ marginTop: 0 }}>等级来自本场回答中的具体内容。没有完成或没有拿到结果的题目，不会被当成答错。</p>
+                  <div className="signal-distribution" aria-label="回答等级分布">
+                    {Object.entries(report.level_distribution).map(([level, count]) => (
+                      <div key={level} className="signal-distribution-row">
+                        <span>{level} · {levelLabels[level]}</span>
+                        <div className="signal-distribution-bar"><span style={{ width: `${report.valid_evidence_count ? (count / report.valid_evidence_count) * 100 : 0}%` }} /></div>
+                        <strong>{count}</strong>
+                      </div>
+                    ))}
+                  </div>
                   <div className="signal-actions signal-actions--between">
                     <div className="signal-question-meta">
                       {Object.entries(report.assessment_status_counts).map(([status, count]) => <span key={status} className="signal-tag">{statusLabel(status)}：{count}</span>)}

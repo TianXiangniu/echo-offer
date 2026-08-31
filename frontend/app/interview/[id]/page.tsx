@@ -22,8 +22,16 @@ function newSubmissionId() {
 const categoryLabels = { project: "项目题", agent: "基础题", reliability: "工程题" } as const;
 
 function batchErrorMessage(result: AssessmentBatchResponse) {
-  const failedAssessment = result.assessments.find((item) => item.assessment.error_reason);
-  return failedAssessment?.assessment.error_reason ?? "报告没有生成，请点击重试。";
+  const failedAssessment = result.assessments.find((item) => item.assessment.error_code);
+  const messages: Record<string, string> = {
+    provider_auth_failed: "评分服务配置有问题，请稍后再试。",
+    provider_rate_limited: "评分服务现在比较忙，请稍后再试。",
+    provider_unavailable: "评分服务暂时不可用，请稍后再试。",
+    invalid_batch_case: "回答已经保存，但这次报告没有生成。可以直接重试。",
+    invalid_evidence: "回答已经保存，但这次报告没有生成。可以直接重试。",
+    system_error: "回答已经保存，但这次报告没有生成。可以直接重试。",
+  };
+  return messages[failedAssessment?.assessment.error_code ?? ""] ?? "这次没有拿到评分结果。";
 }
 
 export default function InterviewPage() {
@@ -72,7 +80,7 @@ export default function InterviewPage() {
     } catch (caught) {
       setCanRetryAssessment(true);
       setAssessmentStage(null);
-      setError(caught instanceof Error ? caught.message : "报告生成失败，请稍后重试。");
+      setError(caught instanceof Error ? "回答已经保存，但这次报告没有生成。可以直接重试。" : "这次没有拿到评分结果。");
     } finally {
       setBusy(false);
     }
@@ -204,10 +212,20 @@ export default function InterviewPage() {
                     </div>
                   </div>
                 )}
-                {assessment?.status !== "valid" && (canRetryAssessment || !assessment) && (
+                {!assessment && !assessmentStage && (
                   <button type="button" onClick={() => void generateAssessment()} disabled={busy} className="signal-button signal-button--primary" style={{ marginTop: 28 }}>
-                    {busy ? "正在生成…" : statusCopy.timeoutAction}
+                    {busy ? "正在生成…" : "生成本场报告"}
                   </button>
+                )}
+                {canRetryAssessment && !assessmentStage && (
+                  <div className="signal-status signal-status--error" style={{ marginTop: 28 }} aria-live="polite">
+                    <p className="signal-status-title">{statusCopy.timeoutTitle}</p>
+                    <p className="signal-progress-label">{statusCopy.timeoutReason}</p>
+                    <p className="signal-status-copy">{statusCopy.timeoutDescription}</p>
+                    <button type="button" onClick={() => void generateAssessment()} disabled={busy} className="signal-button signal-button--primary" style={{ marginTop: 8, width: "fit-content" }}>
+                      {busy ? "正在生成…" : statusCopy.timeoutAction}
+                    </button>
+                  </div>
                 )}
                 {assessment?.status === "valid" && <button type="button" onClick={() => router.push(`/report/${sessionId}`)} className="signal-button signal-button--primary" style={{ marginTop: 28 }}>查看本场报告</button>}
               </section>

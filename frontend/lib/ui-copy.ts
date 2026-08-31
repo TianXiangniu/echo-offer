@@ -48,8 +48,8 @@ export const reportCopy = {
   goodAnswers: "回答较好的地方",
   improvements: "可以改进的地方",
   completed: "完成题目",
-  goodCount: "回答较好",
-  improveCount: "需要加强",
+  goodCount: "较好回答（展示）",
+  improveCount: "需要加强（展示）",
 } as const;
 
 export const statusCopy = {
