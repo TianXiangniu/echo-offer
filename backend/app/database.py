@@ -26,6 +26,14 @@ def create_database(database_url: str):
                 connection.exec_driver_sql(
                     "ALTER TABLE interview_questions ADD COLUMN rubric_json TEXT DEFAULT '{}'"
                 )
+        assessment_columns = {
+            column["name"] for column in inspect(engine).get_columns("assessment_runs")
+        }
+        if "batch_id" not in assessment_columns:
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE assessment_runs ADD COLUMN batch_id VARCHAR(36)"
+                )
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     return engine, factory
 

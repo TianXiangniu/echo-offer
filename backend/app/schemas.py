@@ -155,6 +155,20 @@ class AssessmentResponse(BaseModel):
     rubric_items: list[RubricObservationResponse] = Field(default_factory=list)
 
 
+class AssessmentBatchItemResponse(BaseModel):
+    answer_id: str
+    question_id: str
+    assessment: AssessmentResponse
+
+
+class AssessmentBatchResponse(BaseModel):
+    status: str
+    batch_id: str | None = None
+    evaluated_count: int
+    total_count: int
+    assessments: list[AssessmentBatchItemResponse] = Field(default_factory=list)
+
+
 class AnswerResponse(BaseModel):
     answer: dict
     observation: ObservationResponse | None

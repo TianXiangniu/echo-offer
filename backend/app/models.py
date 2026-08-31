@@ -192,6 +192,7 @@ class AssessmentRun(Base):
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     error_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt_number: Mapped[int] = mapped_column(Integer, default=1)
+    batch_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 

@@ -2,11 +2,15 @@ import json
 
 import httpx
 import pytest
+from sqlalchemy import inspect
 
 import app.assessment_engine as assessment_engine
 import app.providers as providers
+import app.schemas as schemas
 from app.question_bank import build_question_specs
 from app.rubrics import build_rubric
+from app.database import create_database
+from app.models import AssessmentRun
 
 
 def make_cases():
@@ -124,3 +128,23 @@ def test_siliconflow_batch_provider_uses_one_http_request():
     request_text = json.dumps(captured["json"], ensure_ascii=False)
     assert "resume_text" not in request_text
     assert "历史画像" not in request_text
+
+
+def test_batch_persistence_and_response_contract(tmp_path):
+    engine, _ = create_database(f"sqlite:///{tmp_path / 'batch.db'}")
+
+    assert hasattr(AssessmentRun, "batch_id")
+    columns = {column["name"] for column in inspect(engine).get_columns("assessment_runs")}
+    assert "batch_id" in columns
+
+    response_type = getattr(schemas, "AssessmentBatchResponse", None)
+    assert response_type is not None, "AssessmentBatchResponse is not implemented"
+    response = response_type(
+        status="valid",
+        batch_id="batch-1",
+        evaluated_count=2,
+        total_count=3,
+        assessments=[],
+    )
+    assert response.batch_id == "batch-1"
+    assert response.evaluated_count == 2
