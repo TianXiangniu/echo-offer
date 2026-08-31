@@ -110,6 +110,20 @@ export type AssessmentResult = {
   rubric_items: RubricObservation[];
 };
 
+export type AssessmentBatchItem = {
+  answer_id: string;
+  question_id: string;
+  assessment: AssessmentResult;
+};
+
+export type AssessmentBatchResponse = {
+  status: "pending" | "valid" | "invalid" | "rejected" | string;
+  batch_id: string | null;
+  evaluated_count: number;
+  total_count: number;
+  assessments: AssessmentBatchItem[];
+};
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -283,6 +297,13 @@ export function submitAnswer(sessionId: string, input: AnswerInput) {
   }>(
     `/api/sessions/${sessionId}/answers`,
     { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export function assessSession(sessionId: string) {
+  return request<AssessmentBatchResponse>(
+    "/api/sessions/" + sessionId + "/assessment",
+    { method: "POST", body: JSON.stringify({}) },
   );
 }
 

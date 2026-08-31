@@ -1,4 +1,5 @@
-import type { AssessmentResult, RubricObservation } from "./api";
+import type { AssessmentBatchResponse, AssessmentResult, RubricObservation } from "./api";
+import { assessmentStages } from "./assessment-flow";
 
 const rubricObservation: RubricObservation = {
   rubric_id: "mechanism",
@@ -22,4 +23,20 @@ const assessment: AssessmentResult = {
 
 if (assessment.rubric_items[0]?.rubric_id !== "mechanism") {
   throw new Error("AI assessment type contract failed");
+}
+
+const batchResponse: AssessmentBatchResponse = {
+  status: "valid",
+  batch_id: "batch-1",
+  evaluated_count: 2,
+  total_count: 3,
+  assessments: [],
+};
+
+if (batchResponse.evaluated_count !== 2) {
+  throw new Error("batch assessment type contract failed");
+}
+
+if (assessmentStages.length !== 4 || assessmentStages[1] !== "请求模型") {
+  throw new Error("batch assessment stage contract failed");
 }
