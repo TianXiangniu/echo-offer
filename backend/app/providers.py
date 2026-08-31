@@ -14,6 +14,19 @@ from .schemas import AgentProjectAnalysisResponse
 
 
 @dataclass(frozen=True, slots=True)
+class RubricAssessmentResult:
+    rubric_id: str
+    level: int
+    evidence_start: int
+    evidence_end: int
+    quoted_text: str
+    answer_text_hash: str
+    confidence: float
+    validity: str = "valid"
+    invalid_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AssessmentResult:
     level: int
     evidence_start: int
@@ -22,6 +35,8 @@ class AssessmentResult:
     answer_text_hash: str
     gaps: tuple[str, ...]
     confidence: float
+    rubric_items: tuple[RubricAssessmentResult, ...] = ()
+    evaluator: str = "alpha-local-rule-v1"
 
 
 class AssessmentProvider(Protocol):
