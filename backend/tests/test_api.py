@@ -7,6 +7,7 @@ from docx import Document
 from sqlalchemy import select
 
 from app.models import Resume, ResumeProjectQuestion, ResumeSource, User
+from app.schemas import AgentProjectAnalysisResponse
 
 
 PROJECT = {
@@ -19,6 +20,14 @@ PROJECT = {
     "failure_improvements": "增加监控和降级",
     "quantified_results": "P95 降低 20%",
 }
+
+
+class StaticProjectAnalysisProvider:
+    def __init__(self, result):
+        self.result = result
+
+    def analyze(self, resume_text):
+        return self.result
 
 
 def make_pdf_bytes():
@@ -194,6 +203,59 @@ def test_parse_returns_stable_file_errors(client):
     assert invalid_signature.json()["code"] == "invalid_file_signature"
     assert too_large.status_code == 413
     assert too_large.json()["code"] == "file_too_large"
+
+
+def test_stream_analysis_route_returns_sse_events(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    analysis = AgentProjectAnalysisResponse.model_validate(
+        {
+            "project": PROJECT,
+            "selection_reason": "简历中包含 Agent 项目经历。",
+            "confidence": 0.8,
+            "evidence": [
+                {
+                    "field": "background_goal",
+                    "quote": "Project experience: built a retrieval augmented generation agent for enterprise search.",
+                }
+            ],
+            "questions": [
+                {
+                    "prompt": "你在项目中具体负责了什么？",
+                    "knowledge_point_id": "project.ownership_and_context",
+                    "signals": ["职责", "项目"],
+                },
+                {
+                    "prompt": "为什么选择这套技术方案？",
+                    "knowledge_point_id": "project.architecture_tradeoffs",
+                    "signals": ["方案", "取舍"],
+                },
+                {
+                    "prompt": "你如何验证项目效果？",
+                    "knowledge_point_id": "project.evaluation_and_reproducibility",
+                    "signals": ["效果", "验证"],
+                },
+            ],
+            "missing_information": [],
+        }
+    )
+    client.app.state.project_analysis_provider = StaticProjectAnalysisProvider(analysis)
+
+    with client.stream(
+        "POST",
+        f"/api/resumes/{parsed['resume_id']}/agent-project-analysis/stream",
+        json={"resume_text": parsed["extracted_text"]},
+    ) as response:
+        body = response.read().decode("utf-8")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert "event: result" in body
+    assert body.index("event: result") < body.index("event: done")
 
 
 def test_profile_reuses_parsed_resume_and_saves_final_text(client):

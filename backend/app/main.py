@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from .config import (
@@ -51,6 +51,7 @@ from .services import (
     get_session_view,
     parse_and_store_resume,
     submit_answer,
+    stream_resume_project_analysis,
 )
 
 
@@ -174,6 +175,26 @@ def create_app(
             app.state.project_analysis_provider,
             resume_id,
             payload.resume_text,
+        )
+
+    @app.post("/api/resumes/{resume_id}/agent-project-analysis/stream")
+    async def analyze_project_stream(
+        resume_id: str,
+        payload: AgentProjectAnalysisRequest,
+        db: Session = Depends(get_db),
+    ):
+        return StreamingResponse(
+            stream_resume_project_analysis(
+                db,
+                app.state.project_analysis_provider,
+                resume_id,
+                payload.resume_text,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     @app.post("/api/sessions", response_model=SessionCreateResponse)
