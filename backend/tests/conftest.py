@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.providers import (
     AssessmentProviderError,
     AssessmentResult,
+    BatchAssessmentItem,
     RubricAssessmentResult,
     RuleBasedAssessmentProvider,
 )
@@ -25,6 +26,7 @@ class FakeAssessmentProvider:
         self.invalid = invalid
         self.provider_error = provider_error
         self.calls = 0
+        self.batch_calls = 0
 
     def assess(self, question, answer_text, status):
         self.calls += 1
@@ -61,6 +63,22 @@ class FakeAssessmentProvider:
             confidence=0.8,
             rubric_items=items,
             evaluator="fake-blind-rubric-v1",
+        )
+
+    def assess_batch(self, cases):
+        self.batch_calls += 1
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            if self.provider_error is not None:
+                raise self.provider_error
+            raise RuntimeError("fake provider failure")
+        return tuple(
+            BatchAssessmentItem(
+                answer_id=case.answer_id,
+                question_id=case.question_id,
+                result=self.assess(case.question, case.answer_text, "submitted"),
+            )
+            for case in cases
         )
 
 

@@ -30,6 +30,7 @@ from .resume_parsers import ResumeParserError
 from .schemas import (
     AnswerResponse,
     AnswerSubmission,
+    AssessmentBatchResponse,
     AgentProjectAnalysisRequest,
     AgentProjectAnalysisResponseEnvelope,
     ProfileCreate,
@@ -48,6 +49,7 @@ from .services import (
     ResumeOwnerConflictError,
     ProjectAnalysisError,
     analyze_resume_project,
+    assess_session,
     create_profile,
     create_session,
     get_report,
@@ -220,7 +222,14 @@ def create_app(
         payload: AnswerSubmission,
         db: Session = Depends(get_db),
     ):
-        return submit_answer(db, session_id, payload, app.state.assessment_provider)
+        return submit_answer(db, session_id, payload)
+
+    @app.post(
+        "/api/sessions/{session_id}/assessment",
+        response_model=AssessmentBatchResponse,
+    )
+    def assessment(session_id: str, db: Session = Depends(get_db)):
+        return assess_session(db, session_id, app.state.assessment_provider)
 
     @app.get("/api/sessions/{session_id}/report", response_model=ReportResponse)
     def report(session_id: str, db: Session = Depends(get_db)):

@@ -312,7 +312,7 @@ def test_session_read_returns_current_question_and_progress(client, session_cont
     assert view["progress"] == {"completed": 0, "total": 8}
 
 
-def test_duplicate_submission_returns_one_answer_and_one_observation(
+def test_duplicate_submission_returns_one_answer_without_assessment(
     client, session_context
 ):
     session_id, questions = session_context
@@ -329,7 +329,9 @@ def test_duplicate_submission_returns_one_answer_and_one_observation(
     assert first.status_code == 200
     assert second.status_code == 200
     assert first.json()["answer"]["id"] == second.json()["answer"]["id"]
-    assert first.json()["observation"]["id"] == second.json()["observation"]["id"]
+    assert first.json()["observation"] is None
+    assert first.json()["assessment"] is None
+    assert second.json()["assessment"] is None
 
 
 def test_same_submission_id_with_different_payload_returns_409(client, session_context):
@@ -370,9 +372,11 @@ def test_unknown_and_skipped_have_distinct_evaluation_behavior(client, session_c
     )
 
     assert unknown.status_code == 200
-    assert unknown.json()["observation"]["level"] == 0
+    assert unknown.json()["observation"] is None
+    assert unknown.json()["assessment"] is None
     assert skipped.status_code == 200
     assert skipped.json()["observation"] is None
+    assert skipped.json()["assessment"] is None
 
 
 def test_blank_submitted_answer_is_rejected(client, session_context):
@@ -411,11 +415,11 @@ def test_report_aggregates_without_uncalibrated_score(client, session_context):
     assert report["completion"] == {"completed": 2, "total": 8}
     assert report["anchor_coverage"] == {"answered": 2, "total": 3}
     assert 0 < report["coverage"] < 1
-    assert report["valid_evidence_count"] == 2
+    assert report["valid_evidence_count"] == 0
     assert "score_100" not in report
 
 
-def test_ai_assessment_is_saved_per_rubric_and_aggregated(ai_client, ai_session_context):
+def test_ai_assessment_is_deferred_until_session_completion(ai_client, ai_session_context):
     session_id, questions = ai_session_context
     response = ai_client.post(
         f"/api/sessions/{session_id}/answers",
@@ -429,12 +433,11 @@ def test_ai_assessment_is_saved_per_rubric_and_aggregated(ai_client, ai_session_
 
     assert response.status_code == 200
     body = response.json()
-    assert body["assessment"]["status"] == "valid"
-    assert body["assessment"]["level"] == 3
-    assert len(body["assessment"]["rubric_items"]) == 4
+    assert body["assessment"] is None
+    assert ai_client.app.state.assessment_provider.batch_calls == 0
 
 
-def test_provider_error_preserves_answer_and_same_payload_retries(
+def test_provider_error_does_not_affect_answer_submission(
     failing_ai_client, failing_ai_session_context
 ):
     session_id, questions = failing_ai_session_context
@@ -450,29 +453,22 @@ def test_provider_error_preserves_answer_and_same_payload_retries(
 
     assert first.status_code == 200
     assert first.json()["answer"]["answer_text"] == payload["answer_text"]
-    assert first.json()["assessment"]["status"] == "pending"
-    assert first.json()["assessment"]["error_code"] == "system_error"
+    assert first.json()["assessment"] is None
     assert second.status_code == 200
     assert second.json()["answer"]["id"] == first.json()["answer"]["id"]
-    assert second.json()["assessment"]["status"] == "valid"
+    assert second.json()["assessment"] is None
+    assert failing_ai_client.app.state.assessment_provider.batch_calls == 0
 
 
 def test_provider_error_code_is_preserved(
     provider_error_ai_client, provider_error_ai_session_context
 ):
     session_id, questions = provider_error_ai_session_context
-    response = provider_error_ai_client.post(
-        f"/api/sessions/{session_id}/answers",
-        json={
-            "question_id": questions[0]["id"],
-            "client_submission_id": "ai-provider-error-1",
-            "status": "submitted",
-            "answer_text": "模型超时后仍然应该保留可重试状态。",
-        },
-    )
+    submit_all_batch_answers(provider_error_ai_client, session_id, questions)
+    response = provider_error_ai_client.post(f"/api/sessions/{session_id}/assessment")
 
     assert response.status_code == 200
-    assessment = response.json()["assessment"]
+    assessment = response.json()["assessments"][0]["assessment"]
     assert assessment["status"] == "pending"
     assert assessment["error_code"] == "provider_timeout"
 
@@ -481,45 +477,103 @@ def test_invalid_rubric_evidence_is_preserved_but_excluded_from_report(
     invalid_ai_client, invalid_ai_session_context
 ):
     session_id, questions = invalid_ai_session_context
-    response = invalid_ai_client.post(
-        f"/api/sessions/{session_id}/answers",
-        json={
-            "question_id": questions[0]["id"],
-            "client_submission_id": "ai-invalid-1",
-            "status": "submitted",
-            "answer_text": "这条回答的证据需要被保留并审计。",
-        },
-    )
+    submit_all_batch_answers(invalid_ai_client, session_id, questions)
+    response = invalid_ai_client.post(f"/api/sessions/{session_id}/assessment")
 
     assert response.status_code == 200
-    assessment = response.json()["assessment"]
+    assessment = response.json()["assessments"][0]["assessment"]
     assert assessment["status"] == "invalid"
     assert any(item["validity"] == "invalid" for item in assessment["rubric_items"])
 
     report = invalid_ai_client.get(f"/api/sessions/{session_id}/report").json()
     assert report["valid_evidence_count"] == 0
-    assert report["assessment_status_counts"]["invalid"] == 1
+    assert report["assessment_status_counts"]["invalid"] == len(questions)
 
 
 def test_report_exposes_valid_ai_rubric_evidence(ai_client, ai_session_context):
     session_id, questions = ai_session_context
-    response = ai_client.post(
-        f"/api/sessions/{session_id}/answers",
-        json={
-            "question_id": questions[0]["id"],
-            "client_submission_id": "ai-report-rubric-1",
-            "status": "submitted",
-            "answer_text": "报告应该能够回溯每个 Rubric 项的证据。",
-        },
-    )
+    submit_all_batch_answers(ai_client, session_id, questions)
+    response = ai_client.post(f"/api/sessions/{session_id}/assessment")
     assert response.status_code == 200
 
     report = ai_client.get(f"/api/sessions/{session_id}/report").json()
 
-    assert len(report["rubric_items"]) == 4
+    assert len(report["rubric_items"]) == 32
     assert {item["rubric_id"] for item in report["rubric_items"]} == {
         "correctness",
         "mechanism",
         "scenario",
         "engineering",
     }
+
+
+def batch_answer_payload(question, index):
+    return {
+        "question_id": question["id"],
+        "client_submission_id": f"batch-{index}",
+        "status": "submitted",
+        "answer_text": f"第 {index} 题回答：我说明机制、边界和工程取舍。",
+    }
+
+
+def submit_all_batch_answers(client, session_id, questions):
+    for index, question in enumerate(questions, start=1):
+        response = client.post(
+            f"/api/sessions/{session_id}/answers",
+            json=batch_answer_payload(question, index),
+        )
+        assert response.status_code == 200
+
+
+def test_answer_submission_does_not_call_ai(ai_client, ai_session_context):
+    session_id, questions = ai_session_context
+
+    response = ai_client.post(
+        f"/api/sessions/{session_id}/answers",
+        json=batch_answer_payload(questions[0], 1),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["assessment"] is None
+    assert ai_client.app.state.assessment_provider.batch_calls == 0
+
+
+def test_completed_session_uses_one_batch_call(ai_client, ai_session_context):
+    session_id, questions = ai_session_context
+    submit_all_batch_answers(ai_client, session_id, questions)
+
+    response = ai_client.post(f"/api/sessions/{session_id}/assessment")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "valid"
+    assert response.json()["evaluated_count"] == len(questions)
+    assert len(response.json()["assessments"]) == len(questions)
+    assert ai_client.app.state.assessment_provider.batch_calls == 1
+
+
+def test_incomplete_session_cannot_start_batch_assessment(ai_client, ai_session_context):
+    session_id, questions = ai_session_context
+    response = ai_client.post(
+        f"/api/sessions/{session_id}/answers",
+        json=batch_answer_payload(questions[0], 1),
+    )
+
+    assert response.status_code == 200
+    assessment_response = ai_client.post(f"/api/sessions/{session_id}/assessment")
+
+    assert assessment_response.status_code == 409
+    assert "缺少" in assessment_response.json()["detail"]
+    assert ai_client.app.state.assessment_provider.batch_calls == 0
+
+
+def test_repeating_valid_batch_does_not_call_ai(ai_client, ai_session_context):
+    session_id, questions = ai_session_context
+    submit_all_batch_answers(ai_client, session_id, questions)
+    first = ai_client.post(f"/api/sessions/{session_id}/assessment")
+
+    second = ai_client.post(f"/api/sessions/{session_id}/assessment")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["status"] == "valid"
+    assert ai_client.app.state.assessment_provider.batch_calls == 1

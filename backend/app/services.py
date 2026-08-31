@@ -38,6 +38,7 @@ from .project_analysis import validate_analysis_evidence
 from .providers import (
     AssessmentProvider,
     AssessmentProviderError,
+    BatchAssessmentCase,
     ProjectAnalysisProvider,
     ProjectAnalysisProviderError,
 )
@@ -550,7 +551,6 @@ def submit_answer(
     db: Session,
     session_id: str,
     payload: AnswerSubmission,
-    assessment_provider: AssessmentProvider,
 ) -> dict:
     session = db.get(InterviewSession, session_id)
     if session is None:
@@ -576,16 +576,10 @@ def submit_answer(
     if existing is not None:
         if existing.payload_hash != payload_hash:
             raise ConflictError("client_submission_id was already used with different content")
-        run = _latest_assessment_run(db, existing.id)
-        if (
-            existing.status != "skipped"
-            and run is not None
-            and run.status in {"pending", "invalid", "rejected"}
-        ):
-            run = evaluate_answer(db, existing, question, assessment_provider)
         observation = db.scalar(
             select(AssessmentObservation).where(AssessmentObservation.answer_id == existing.id)
         )
+        run = _latest_assessment_run(db, existing.id)
         return _answer_result_response(existing, observation, run, db)
 
     answer_text_hash = hashlib.sha256(payload.answer_text.encode("utf-8")).hexdigest()
@@ -603,20 +597,190 @@ def submit_answer(
     db.add(answer)
     db.commit()
 
-    run = None
-    observation = None
-    if payload.status != "skipped":
-        run = evaluate_answer(db, answer, question, assessment_provider, payload.status)
-        observation = db.scalar(
-            select(AssessmentObservation).where(AssessmentObservation.answer_id == answer.id)
-        )
-
     session.current_question_index = min(session.total_questions, session.current_question_index + 1)
     session.session_version += 1
     if session.current_question_index >= session.total_questions:
         session.status = "completed"
     db.commit()
-    return _answer_result_response(answer, observation, run, db)
+    return _answer_result_response(answer, None, None, db)
+
+
+def _batch_status(runs: list[AssessmentRun]) -> str:
+    statuses = {run.status for run in runs}
+    if "pending" in statuses:
+        return "pending"
+    if "rejected" in statuses:
+        return "rejected"
+    if "invalid" in statuses:
+        return "invalid"
+    return "valid"
+
+
+def _batch_result_response(
+    db: Session,
+    answers: list[AnswerAttempt],
+    total_count: int,
+    batch_id: str | None,
+) -> dict:
+    runs = [
+        run
+        for answer in answers
+        if answer.status != "skipped"
+        for run in [_latest_assessment_run(db, answer.id)]
+        if run is not None
+    ]
+    return {
+        "status": _batch_status(runs) if runs else "valid",
+        "batch_id": batch_id,
+        "evaluated_count": len(runs),
+        "total_count": total_count,
+        "assessments": [
+            {
+                "answer_id": answer.id,
+                "question_id": answer.question_id,
+                "assessment": _assessment_response(run, db),
+            }
+            for answer in answers
+            if answer.status != "skipped"
+            for run in [_latest_assessment_run(db, answer.id)]
+            if run is not None
+        ],
+    }
+
+
+def assess_session(
+    db: Session,
+    session_id: str,
+    assessment_provider: AssessmentProvider,
+) -> dict:
+    """Evaluate all completed answers with one provider call."""
+    session = db.get(InterviewSession, session_id)
+    if session is None:
+        raise NotFoundError("session not found")
+    questions = list(
+        db.scalars(
+            select(InterviewQuestion)
+            .where(InterviewQuestion.session_id == session_id)
+            .order_by(InterviewQuestion.order)
+        )
+    )
+    answers = list(
+        db.scalars(
+            select(AnswerAttempt)
+            .where(AnswerAttempt.session_id == session_id)
+            .order_by(AnswerAttempt.created_at, AnswerAttempt.id)
+        )
+    )
+    answered_question_ids = {answer.question_id for answer in answers}
+    missing_count = len(questions) - len(answered_question_ids)
+    if missing_count:
+        raise ConflictError(f"面试尚未完成，还缺少 {missing_count} 道题")
+
+    scored_answers = [answer for answer in answers if answer.status != "skipped"]
+    existing_runs = {
+        answer.id: _latest_assessment_run(db, answer.id) for answer in scored_answers
+    }
+    if scored_answers and all(
+        run is not None and run.status == "valid" for run in existing_runs.values()
+    ):
+        batch_id = next(
+            (run.batch_id for run in existing_runs.values() if run and run.batch_id),
+            None,
+        )
+        return _batch_result_response(db, answers, len(questions), batch_id)
+    if not scored_answers:
+        return _batch_result_response(db, answers, len(questions), None)
+
+    question_by_id = {question.id: question for question in questions}
+    evaluator = getattr(assessment_provider, "evaluator", "siliconflow-blind-rubric-v1")
+    batch_id = str(uuid4())
+    runs_by_answer: dict[str, AssessmentRun] = {}
+    for answer in scored_answers:
+        question = question_by_id[answer.question_id]
+        rubric = build_rubric(_question_spec(question))
+        run = AssessmentRun(
+            id=str(uuid4()),
+            answer_id=answer.id,
+            question_id=question.id,
+            evaluator=evaluator,
+            rubric_version=rubric.version,
+            status="pending",
+            attempt_number=(existing_runs[answer.id].attempt_number + 1)
+            if existing_runs[answer.id] is not None
+            else 1,
+            batch_id=batch_id,
+        )
+        db.add(run)
+        runs_by_answer[answer.id] = run
+    db.commit()
+
+    cases: list[BatchAssessmentCase] = []
+    for answer in scored_answers:
+        question = question_by_id[answer.question_id]
+        question_spec = _question_spec(question)
+        if answer.status == "explicit_unknown":
+            result = build_explicit_unknown_assessment(
+                question_spec,
+                answer.answer_text,
+                evaluator=evaluator,
+            )
+            _persist_rubric_result(db, runs_by_answer[answer.id], result)
+            run = runs_by_answer[answer.id]
+            run.status = "valid"
+            run.aggregate_level = result.level
+            run.aggregate_confidence = result.confidence
+        else:
+            cases.append(
+                BatchAssessmentCase(
+                    answer_id=answer.id,
+                    question_id=question.id,
+                    question=question_spec,
+                    answer_text=answer.answer_text,
+                )
+            )
+    db.commit()
+
+    try:
+        results = assessment_provider.assess_batch(tuple(cases)) if cases else ()
+        expected_keys = {(case.answer_id, case.question_id) for case in cases}
+        actual_keys = {(item.answer_id, item.question_id) for item in results}
+        if actual_keys != expected_keys or len(results) != len(actual_keys):
+            raise AssessmentResponseError("invalid_batch_case", "批量评分结果与回答不匹配")
+        for item in results:
+            run = runs_by_answer[item.answer_id]
+            _persist_rubric_result(db, run, item.result)
+            if item.result.rubric_items and all(
+                observation.validity == "valid" for observation in item.result.rubric_items
+            ):
+                run.status = "valid"
+                run.aggregate_level = item.result.level
+                run.aggregate_confidence = item.result.confidence
+            else:
+                run.status = "invalid"
+                run.error_code = "invalid_evidence"
+                run.error_reason = "至少一个 Rubric 证据未通过完整性校验"
+        db.commit()
+    except AssessmentProviderError as exc:
+        for run in runs_by_answer.values():
+            if run.status == "pending":
+                run.error_code = exc.code
+                run.error_reason = str(exc)[:500]
+        db.commit()
+    except AssessmentResponseError as exc:
+        for run in runs_by_answer.values():
+            if run.status == "pending":
+                run.status = "rejected"
+                run.error_code = exc.code
+                run.error_reason = str(exc)[:500]
+        db.commit()
+    except Exception as exc:
+        for run in runs_by_answer.values():
+            if run.status == "pending":
+                run.error_code = "system_error"
+                run.error_reason = str(exc)[:500]
+        db.commit()
+
+    return _batch_result_response(db, answers, len(questions), batch_id)
 
 
 def _latest_assessment_run(db: Session, answer_id: str) -> AssessmentRun | None:
