@@ -47,3 +47,9 @@ for (const token of ["reportCopy", "回答摘录", "评分理由", "本场报告
 for (const token of ["Rubric evidence", "Evidence quality", "Level distribution", "可信边界", "有效证据数"]) {
   if (reportPage.includes(token)) throw new Error(`report page leaked: ${token}`);
 }
+
+for (const path of ["../app/page.tsx", "../app/interview/[id]/page.tsx", "../app/report/[id]/page.tsx"]) {
+  const source = readFileSync(new URL(path, import.meta.url), "utf8");
+  if (!source.includes("aria-label")) throw new Error(`${path} needs named navigation/work areas`);
+}
+if (!css.includes("@media (max-width")) throw new Error("responsive layout contract missing");
