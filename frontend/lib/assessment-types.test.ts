@@ -1,5 +1,5 @@
 import type { AssessmentBatchResponse, AssessmentResult, RubricObservation } from "./api";
-import { assessmentStages, isAssessmentRetryable } from "./assessment-flow";
+import { assessmentStages, isAssessmentRetryable } from "./assessment-flow.ts";
 
 const rubricObservation: RubricObservation = {
   rubric_id: "mechanism",

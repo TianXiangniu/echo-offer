@@ -9,6 +9,7 @@ data/uploads/
 node_modules/
 frontend/.next/
 frontend/out/
+*.tsbuildinfo
 .superpowers/
 frontend/.env.local
 backend/.env
