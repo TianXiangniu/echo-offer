@@ -5,21 +5,65 @@ import { useParams, useRouter } from "next/navigation";
 
 import { assessSession, getReport, Report } from "@/lib/api";
 import { isAssessmentRetryable } from "@/lib/assessment-flow";
+import { brandCopy, reportCopy, statusCopy } from "@/lib/ui-copy";
 
-const levelLabels: Record<string, string> = { "0": "无有效内容", "1": "名词层", "2": "基本理解", "3": "场景分析", "4": "深入权衡" };
+const levelLabels: Record<string, string> = {
+  "0": "没有答到要点",
+  "1": "知道相关概念",
+  "2": "基本理解",
+  "3": "能结合场景",
+  "4": "讲清取舍和风险",
+};
+
+const rubricLabels: Record<string, string> = {
+  mechanism: "机制",
+  boundary: "边界",
+  tradeoff: "取舍",
+  failure_mode: "故障处理",
+};
 
 function percent(value: number) {
   return `${Math.round(value * 100)}%`;
 }
 
-function KnowledgeList({ items, emptyText }: { items: Report["strengths"]; emptyText: string }) {
-  if (!items.length) return <p className="rounded-2xl bg-ink/5 px-4 py-5 text-sm text-ink/45">{emptyText}</p>;
-  return <div className="space-y-3">{items.map((item) => <article key={item.knowledge_point_id} className="rounded-2xl border border-ink/10 bg-white/60 p-4"><div className="flex items-center justify-between gap-4"><span className="font-mono text-xs text-ink/55">{item.knowledge_point_id}</span><span className="rounded-full bg-signal/10 px-2.5 py-1 text-xs font-semibold text-signal">等级 {item.level}</span></div><p className="mt-3 text-sm leading-6 text-ink/70">“{item.evidence}”</p><p className="mt-2 text-xs text-ink/40">证据置信度 {percent(item.confidence)}</p></article>)}</div>;
+function reasonForLevel(level: number, evidence: string) {
+  if (!evidence.trim()) return "这项没有找到可用的回答摘录。";
+  if (level >= 4) return "回答有具体做法，也交代了取舍和可能出错的地方。";
+  if (level === 3) return "回答有具体做法，能联系实际场景说明。";
+  if (level === 2) return "回答方向基本清楚，还可以补充机制或边界。";
+  if (level === 1) return "回答提到了相关概念，但还没有讲清楚怎么做。";
+  return "回答中还没有足够的具体内容来判断这项表现。";
 }
 
-function RubricEvidenceList({ items }: { items: NonNullable<Report["rubric_items"]> }) {
-  if (!items.length) return <p className="rounded-2xl bg-ink/5 px-4 py-5 text-sm text-ink/45">当前没有可展示的 Rubric 证据。</p>;
-  return <div className="grid gap-3 md:grid-cols-2">{items.map((item) => <article key={`${item.question_id}-${item.rubric_id}`} className="rounded-2xl border border-ink/10 bg-white/60 p-4"><div className="flex items-center justify-between gap-3"><span className="font-mono text-xs text-ink/55">{item.rubric_id}</span><span className="rounded-full bg-signal/10 px-2.5 py-1 text-xs font-semibold text-signal">等级 {item.level}</span></div><p className="mt-3 text-sm leading-6 text-ink/70">“{item.evidence}”</p><p className="mt-2 text-xs text-ink/40">证据置信度 {percent(item.confidence)}</p></article>)}</div>;
+function KnowledgeList({ items, emptyText }: { items: Report["strengths"]; emptyText: string }) {
+  if (!items.length) return <p className="signal-note">{emptyText}</p>;
+  return (
+    <div className="signal-report-list">
+      {items.map((item) => (
+        <article key={item.knowledge_point_id} className="signal-report-item">
+          <div className="signal-report-item-heading">
+            <h3 className="signal-report-item-title">{item.knowledge_point_id}</h3>
+            <span className="signal-level">等级 {item.level} · {levelLabels[String(item.level)]}</span>
+          </div>
+          <div className="signal-report-block">
+            <p className="signal-report-label">回答摘录</p>
+            <p className="signal-quote">“{item.evidence}”</p>
+          </div>
+          <p className="signal-note">参考程度 {percent(item.confidence)}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: "等待处理",
+    valid: "已完成",
+    invalid: "需要检查",
+    rejected: "未通过",
+  };
+  return labels[status] ?? status;
 }
 
 export default function ReportPage() {
@@ -40,37 +84,128 @@ export default function ReportPage() {
       const result = await assessSession(params.id);
       if (result.status !== "valid") {
         const reason = result.assessments.find((item) => item.assessment.error_reason)?.assessment.error_reason;
-        setError(reason ?? "评估未完成，请稍后重试。");
+        setError(reason ?? "报告没有生成，请稍后重试。");
         return;
       }
       setReport(await getReport(params.id));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "评估失败，请稍后重试。");
+      setError(caught instanceof Error ? caught.message : "报告生成失败，请稍后重试。");
     } finally {
       setRetrying(false);
     }
   }
 
-  if (error) return <main className="grid min-h-screen place-items-center bg-paper px-6 text-center text-ink"><div><p className="text-red-700">{error}</p><button onClick={() => router.push("/")} className="mt-6 rounded-xl bg-ink px-5 py-3 text-paper">返回首页</button></div></main>;
-  if (!report) return <main className="grid min-h-screen place-items-center bg-paper text-ink">正在整理你的报告…</main>;
+  if (error) {
+    return (
+      <main className="signal-page grid min-h-screen place-items-center px-6">
+        <div className="signal-workspace">
+          <p className="signal-alert" role="alert">{error}</p>
+          <button type="button" onClick={() => router.push("/")} className="signal-button signal-button--primary" style={{ marginTop: 24 }}>{statusCopy.backHome}</button>
+        </div>
+      </main>
+    );
+  }
+
+  if (!report) return <main className="signal-page grid min-h-screen place-items-center"><p className="signal-note">正在整理你的报告…</p></main>;
+
+  const retryNeeded = report.assessment_status_counts
+    && Object.entries(report.assessment_status_counts).some(([status, count]) => count > 0 && isAssessmentRetryable(status));
 
   return (
-    <main className="min-h-screen bg-paper text-ink">
-      <div className="mx-auto max-w-6xl px-5 py-7 sm:px-10">
-        <header className="flex items-center justify-between border-b border-ink/10 pb-6"><button onClick={() => router.push("/")} className="font-display text-xl">Agent Echo</button><span className="text-xs uppercase tracking-[0.2em] text-ink/45">Post-interview / Alpha</span></header>
-        <section className="grid gap-10 pb-20 pt-14 lg:grid-cols-[0.75fr_1.25fr] lg:gap-20">
-          <div><p className="text-xs font-semibold uppercase tracking-[0.22em] text-signal">Your first signal</p><h1 className="mt-5 max-w-xl font-display text-5xl font-semibold leading-tight sm:text-7xl">先看证据，再谈能力。</h1><p className="mt-6 max-w-md text-lg leading-8 text-ink/60">这是一份基于 {report.evaluator.includes("siliconflow") ? "AI 盲评分器" : "本地规则评估器"} 的 Alpha 报告。它保留你的首答证据，不把训练表现覆盖到首答等级。</p><button onClick={() => router.push("/")} className="mt-8 rounded-xl bg-ink px-5 py-3 font-semibold text-paper transition hover:bg-signal">再做一场 →</button></div>
-          <div className="grid gap-4 sm:grid-cols-3"><div className="rounded-3xl bg-ink p-5 text-paper"><p className="text-xs text-white/50">完成度</p><p className="mt-5 font-display text-4xl">{report.completion.completed}<span className="text-xl text-white/40">/{report.completion.total}</span></p><p className="mt-2 text-xs text-white/50">已记录首答</p></div><div className="rounded-3xl border border-ink/10 bg-white/65 p-5"><p className="text-xs text-ink/50">覆盖率</p><p className="mt-5 font-display text-4xl">{percent(report.coverage)}</p><p className="mt-2 text-xs text-ink/50">不是综合分数</p></div><div className="rounded-3xl border border-ink/10 bg-white/65 p-5"><p className="text-xs text-ink/50">锚题</p><p className="mt-5 font-display text-4xl">{report.anchor_coverage.answered}<span className="text-xl text-ink/30">/{report.anchor_coverage.total}</span></p><p className="mt-2 text-xs text-ink/50">跨场比较基础</p></div></div>
-        </section>
+    <main className="signal-page">
+      <div className="signal-container">
+        <header className="signal-header">
+          <button type="button" onClick={() => router.push("/")} className="signal-brand" aria-label={`${brandCopy.name} 首页`}>
+            <span className="signal-brand-mark" aria-hidden="true">E/</span>
+            <span className="signal-brand-name">{brandCopy.name}</span>
+          </button>
+          <div className="signal-header-meta" aria-label="本场报告">
+            <span>{brandCopy.report}</span>
+            <strong>完成后回看</strong>
+          </div>
+        </header>
 
-        {report.assessment_status_counts && <section className="border-t border-ink/10 py-8"><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs uppercase tracking-[0.2em] text-signal">Assessment state</p><h2 className="mt-2 font-display text-3xl">评估状态</h2></div><div className="flex items-center gap-4"><p className="text-sm text-ink/45">未完成或无效的评估不会进入有效证据统计。</p>{Object.entries(report.assessment_status_counts).some(([status, count]) => count > 0 && isAssessmentRetryable(status)) && <button type="button" onClick={() => void retryAssessment()} disabled={retrying} className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">{retrying ? "评估中…" : "重新生成评估"}</button>}</div></div><div className="mt-5 flex flex-wrap gap-3">{Object.entries(report.assessment_status_counts).map(([status, count]) => <span key={status} className="rounded-full border border-ink/10 bg-white/60 px-4 py-2 text-sm text-ink/65">{status}：{count}</span>)}</div></section>}
+        <div className="signal-layout">
+          <aside className="signal-rail" aria-label="报告内容">
+            <p className="signal-rail-heading">报告内容</p>
+            <ol className="signal-rail-list">
+              <li className="signal-rail-step is-active" data-step="01">整体情况</li>
+              <li className="signal-rail-step" data-step="02">回答较好的地方</li>
+              <li className="signal-rail-step" data-step="03">可以改进的地方</li>
+              <li className="signal-rail-step" data-step="04">评分说明</li>
+            </ol>
+          </aside>
 
-        {report.rubric_items && <section className="border-t border-ink/10 py-10"><div className="mb-5"><p className="text-xs uppercase tracking-[0.2em] text-signal">Rubric evidence</p><h2 className="mt-2 font-display text-3xl">每项评分对应的证据</h2></div><RubricEvidenceList items={report.rubric_items} /></section>}
+          <section className="signal-workspace" aria-label="本场报告工作区">
+            <div className="signal-intro">
+              <p className="signal-eyebrow">{brandCopy.report}</p>
+              <h1 className="signal-title">{reportCopy.feedbackTitle}</h1>
+              <p className="signal-copy">这份报告只根据本场已经保存的回答整理，先看具体回答，再决定下一步怎么补。</p>
+              <button type="button" onClick={() => router.push("/")} className="signal-button signal-button--secondary" style={{ marginTop: 24 }}>再做一场</button>
+            </div>
 
-        <section className="grid gap-6 border-t border-ink/10 py-10 lg:grid-cols-2"><div><div className="mb-5 flex items-end justify-between"><div><p className="text-xs uppercase tracking-[0.2em] text-signal">Strengths</p><h2 className="mt-2 font-display text-3xl">你已经说清楚的部分</h2></div><span className="text-sm text-ink/40">Top 3</span></div><KnowledgeList items={report.strengths} emptyText="当前还没有达到等级 3 的有效观察。" /></div><div><div className="mb-5 flex items-end justify-between"><div><p className="text-xs uppercase tracking-[0.2em] text-ember">Gaps</p><h2 className="mt-2 font-display text-3xl">下一次可以补上的部分</h2></div><span className="text-sm text-ink/40">Top 3</span></div><KnowledgeList items={report.gaps} emptyText="当前没有可展示的缺口。" /></div></section>
+            <section className="signal-section" aria-labelledby="summary-heading">
+              <h2 id="summary-heading" className="signal-section-label">整体情况</h2>
+              <div className="signal-metrics">
+                <div className="signal-metric"><span className="signal-metric-label">{reportCopy.completed}</span><strong className="signal-metric-value">{report.completion.completed}<small> / {report.completion.total}</small></strong></div>
+                <div className="signal-metric"><span className="signal-metric-label">{reportCopy.goodCount}</span><strong className="signal-metric-value">{report.strengths.length}</strong></div>
+                <div className="signal-metric"><span className="signal-metric-label">{reportCopy.improveCount}</span><strong className="signal-metric-value">{report.gaps.length}</strong></div>
+              </div>
+            </section>
 
-        <section className="grid gap-6 border-t border-ink/10 py-10 lg:grid-cols-[1fr_0.8fr]"><div><p className="text-xs uppercase tracking-[0.2em] text-signal">Evidence quality</p><h2 className="mt-2 font-display text-3xl">这份报告的可信边界</h2><div className="mt-5 rounded-3xl border border-ink/10 bg-white/60 p-6"><div className="flex items-center justify-between text-sm"><span>有效证据数</span><strong>{report.valid_evidence_count}</strong></div><div className="mt-4 flex items-center justify-between text-sm"><span>平均证据置信度</span><strong>{percent(report.confidence)}</strong></div><p className="mt-6 border-t border-ink/10 pt-5 text-sm leading-7 text-ink/55">至少三条跨问题、跨场次的独立证据后，才适合形成更稳定的能力判断。本场报告不展示未经校准的 0—100 总分。</p></div></div><div><p className="text-xs uppercase tracking-[0.2em] text-signal">Level distribution</p><h2 className="mt-2 font-display text-3xl">观察等级</h2><div className="mt-5 space-y-3">{Object.entries(report.level_distribution).map(([level, count]) => <div key={level} className="flex items-center gap-3 text-sm"><span className="w-24 text-ink/55">{level} · {levelLabels[level]}</span><div className="h-2 flex-1 overflow-hidden rounded-full bg-ink/10"><div className="h-full rounded-full bg-signal" style={{ width: `${report.valid_evidence_count ? (count / report.valid_evidence_count) * 100 : 0}%` }} /></div><span className="w-5 text-right text-ink/50">{count}</span></div>)}</div></div></section>
-        <footer className="border-t border-ink/10 py-8 text-xs text-ink/40">评估器：{report.evaluator} · 本报告是垂直切片演示，不代表最终 LLM 评分质量。</footer>
+            {report.rubric_items && (
+              <section className="signal-section" aria-labelledby="answers-heading">
+                <h2 id="answers-heading" className="signal-section-label">回答摘录与评分</h2>
+                <div className="signal-panel" style={{ padding: 24 }}>
+                  {!report.rubric_items.length && <p className="signal-note">当前没有可以展示的回答摘录。</p>}
+                  {report.rubric_items.map((item) => (
+                    <article key={`${item.question_id}-${item.rubric_id}`} className="signal-report-item">
+                      <div className="signal-report-item-heading">
+                        <h3 className="signal-report-item-title">{item.knowledge_point_id} · {rubricLabels[item.rubric_id] ?? "回答表现"}</h3>
+                        <span className="signal-level">等级 {item.level} / 4</span>
+                      </div>
+                      <div className="signal-report-block">
+                        <p className="signal-report-label">回答摘录</p>
+                        <p className="signal-quote">“{item.evidence || "没有留下可展示的回答摘录。"}”</p>
+                      </div>
+                      <div className="signal-report-block">
+                        <p className="signal-report-label">评分理由</p>
+                        <p className="signal-report-reason">{reasonForLevel(item.level, item.evidence)}</p>
+                      </div>
+                      <p className="signal-note">参考程度 {percent(item.confidence)}</p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section className="signal-section" aria-labelledby="strengths-heading">
+              <h2 id="strengths-heading" className="signal-section-label">{reportCopy.goodAnswers}</h2>
+              <div className="signal-panel" style={{ padding: 24 }}><KnowledgeList items={report.strengths} emptyText="当前还没有足够具体的回答可以归到这里。" /></div>
+            </section>
+
+            <section className="signal-section" aria-labelledby="gaps-heading">
+              <h2 id="gaps-heading" className="signal-section-label">{reportCopy.improvements}</h2>
+              <div className="signal-panel" style={{ padding: 24 }}><KnowledgeList items={report.gaps} emptyText="当前没有可展示的补充方向。" /></div>
+            </section>
+
+            {report.assessment_status_counts && (
+              <section className="signal-section" aria-labelledby="status-heading">
+                <h2 id="status-heading" className="signal-section-label">{reportCopy.scoreExplanation}</h2>
+                <div className="signal-panel" style={{ padding: 24 }}>
+                  <p className="signal-copy" style={{ marginTop: 0 }}>等级来自本场回答中的具体内容。没有完成或没有拿到结果的题目，不会被当成答错。</p>
+                  <div className="signal-actions signal-actions--between">
+                    <div className="signal-question-meta">
+                      {Object.entries(report.assessment_status_counts).map(([status, count]) => <span key={status} className="signal-tag">{statusLabel(status)}：{count}</span>)}
+                    </div>
+                    {retryNeeded && <button type="button" onClick={() => void retryAssessment()} disabled={retrying} className="signal-button signal-button--secondary">{retrying ? "正在生成…" : statusCopy.timeoutAction}</button>}
+                  </div>
+                  <p className="signal-footer">本场没有综合分数。先看回答摘录和评分理由，更容易知道下一次该补哪一段。</p>
+                </div>
+              </section>
+            )}
+          </section>
+        </div>
       </div>
     </main>
   );

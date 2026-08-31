@@ -39,3 +39,11 @@ for (const token of ["Evidence Rail", "Rubric", "请求模型", "校验证据"])
   if (interviewPage.includes(token)) throw new Error(`interview page leaked: ${token}`);
   if (assessmentFlow.includes(token)) throw new Error(`assessment flow leaked: ${token}`);
 }
+
+const reportPage = readFileSync(new URL("../app/report/[id]/page.tsx", import.meta.url), "utf8");
+for (const token of ["reportCopy", "回答摘录", "评分理由", "本场报告"]) {
+  if (!reportPage.includes(token)) throw new Error(`report page missing: ${token}`);
+}
+for (const token of ["Rubric evidence", "Evidence quality", "Level distribution", "可信边界", "有效证据数"]) {
+  if (reportPage.includes(token)) throw new Error(`report page leaked: ${token}`);
+}
