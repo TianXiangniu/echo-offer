@@ -1,4 +1,5 @@
 from io import BytesIO
+import hashlib
 import json
 from uuid import uuid4
 
@@ -6,7 +7,14 @@ import pymupdf
 from docx import Document
 from sqlalchemy import select
 
-from app.models import Resume, ResumeProjectQuestion, ResumeSource, User
+from app.models import (
+    Resume,
+    ResumeProject,
+    ResumeProjectAnalysis,
+    ResumeProjectQuestion,
+    ResumeSource,
+    User,
+)
 from app.schemas import AgentProjectAnalysisResponse
 
 
@@ -28,6 +36,134 @@ class StaticProjectAnalysisProvider:
 
     def analyze(self, resume_text):
         return self.result
+
+
+def rich_analysis_snapshot():
+    return {
+        "schema_version": "project-analysis-v2",
+        "project": {
+            "core": dict(PROJECT),
+            "context": {
+                "project_type": "企业知识库 Agent",
+                "domain": "内部知识检索",
+                "stage": "上线后优化",
+            },
+            "ownership": {
+                "owned_modules": "检索链路与线上监控",
+                "contribution_boundary": "负责核心检索与工程化",
+            },
+            "architecture": {
+                "components": ["API", "Retriever", "Reranker"],
+                "data_flow": "query -> retrieve -> rerank -> answer",
+            },
+            "agent_details": {
+                "model": "Qwen2.5",
+                "tooling": ["向量检索", "重排"],
+            },
+            "tradeoffs": {
+                "chosen_approach": "混合检索 + 重排",
+                "alternatives": ["仅向量检索", "仅关键词检索"],
+            },
+            "engineering": {
+                "latency": "P95 低于 800ms",
+                "monitoring": "线上错误率监控",
+            },
+            "evaluation": {
+                "metrics": ["召回率", "响应延迟"],
+                "baseline": "原始向量检索",
+            },
+            "evolution": {
+                "v1": "单一向量检索",
+                "current": "混合检索 + 重排",
+            },
+        },
+        "selection_reason": "该项目包含 Agent 检索链路和线上工程信息。",
+        "confidence": 0.86,
+        "evidence": [
+            {"field": "responsibilities", "quote": "负责检索链路和线上监控"}
+        ],
+        "questions": [
+            {
+                "prompt": "你在这个项目中具体负责了哪些检索链路？",
+                "knowledge_point_id": "project.ownership_and_context",
+                "signals": ["个人职责", "检索链路"],
+            },
+            {
+                "prompt": "为什么选择查询改写、混合检索和重排的组合？",
+                "knowledge_point_id": "project.architecture_tradeoffs",
+                "signals": ["方案", "取舍"],
+            },
+            {
+                "prompt": "你如何验证召回质量和延迟改进是真实稳定的？",
+                "knowledge_point_id": "project.evaluation_and_reproducibility",
+                "signals": ["评估", "指标", "复现"],
+            },
+        ],
+        "missing_information": ["缺少明确的线上流量规模"],
+        "facts": [
+            {
+                "fact_id": "fact-1",
+                "field": "ownership.owned_modules",
+                "value": "检索链路与线上监控",
+                "status": "extracted",
+                "source_type": "resume",
+                "evidence": [
+                    {
+                        "quote": "负责检索链路和线上监控",
+                        "start_offset": 0,
+                        "end_offset": 14,
+                        "text_hash": "abc123",
+                    }
+                ],
+                "confidence": 0.96,
+                "user_confirmed": False,
+            }
+        ],
+        "question_chain": [
+            {
+                "order": 1,
+                "question_group": "project",
+                "chain_id": "project-main",
+                "prompt": "你负责了哪些部分？",
+                "intent": "确认个人贡献",
+                "depends_on": None,
+                "source_fields": ["background_goal", "ownership.owned_modules"],
+                "source_fact_ids": ["fact-1"],
+                "expected_answer_points": [],
+                "followup_if_incomplete": "请先说明你的职责边界。",
+                "followup_if_conflicting": "请澄清你和团队的分工。",
+                "difficulty": "medium",
+            },
+            {
+                "order": 2,
+                "question_group": "project",
+                "chain_id": "project-tradeoffs",
+                "prompt": "为什么选择查询改写、混合检索和重排的组合？",
+                "intent": "确认方案取舍",
+                "depends_on": 1,
+                "source_fields": ["core_solution", "tradeoffs.chosen_approach"],
+                "source_fact_ids": [],
+                "expected_answer_points": ["备选方案", "取舍", "选择原因"],
+                "followup_if_incomplete": "请补充你比较过的备选方案。",
+                "followup_if_conflicting": "请说明为什么没有采用其他方案。",
+                "difficulty": "medium",
+            },
+            {
+                "order": 3,
+                "question_group": "project",
+                "chain_id": "project-evaluation",
+                "prompt": "你如何验证召回质量和延迟改进是真实稳定的？",
+                "intent": "确认评估方法",
+                "depends_on": 2,
+                "source_fields": ["engineering_challenges", "evaluation.metrics"],
+                "source_fact_ids": [],
+                "expected_answer_points": ["指标", "基线", "实验或线上验证"],
+                "followup_if_incomplete": "请说明你是如何做效果验证的。",
+                "followup_if_conflicting": "请说明验证结果和线上表现是否一致。",
+                "difficulty": "medium",
+            },
+        ],
+    }
 
 
 def make_pdf_bytes():
@@ -277,9 +413,82 @@ def test_profile_reuses_parsed_resume_and_saves_final_text(client):
         assert resumes[0].resume_text == final_text
 
 
+def test_profile_confirmation_reconciles_analysis_snapshot_core_fields(client):
+    parsed = client.post(
+        "/api/resumes/parse",
+        files={"file": ("resume.pdf", make_pdf_bytes(), "application/pdf")},
+    ).json()
+    snapshot = rich_analysis_snapshot()
+    edited_project = {
+        "project_name": "知识库 Agent",
+        "background_goal": "提升企业知识检索效率并降低客服重复答疑成本",
+        "tech_stack": "Python、FastAPI、向量数据库、重排模型",
+        "responsibilities": "负责检索链路、线上监控、故障复盘和效果评估",
+        "core_solution": "查询改写、混合检索、重排和答案引用",
+        "engineering_challenges": "召回质量、延迟和高峰期稳定性平衡",
+        "failure_improvements": "增加评估集、超时降级和异常告警",
+        "quantified_results": "命中率提升 18%，P95 延迟下降 25%",
+    }
+    analysis_id = str(uuid4())
+
+    with client.app.state.session_factory() as db:
+        resume = db.get(Resume, parsed["resume_id"])
+        db.add(
+            ResumeProjectAnalysis(
+                id=analysis_id,
+                resume_id=resume.id,
+                user_id=resume.user_id,
+                resume_text_hash=hashlib.sha256(
+                    parsed["extracted_text"].encode("utf-8")
+                ).hexdigest(),
+                model_name="test-model",
+                provider_name="test-provider",
+                status="draft",
+                analysis_json=json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+            )
+        )
+        db.commit()
+
+    response = client.post(
+        "/api/profile",
+        json={
+            "resume_id": parsed["resume_id"],
+            "resume_text": parsed["extracted_text"],
+            "analysis_id": analysis_id,
+            "project": edited_project,
+            "project_questions": snapshot["questions"],
+        },
+    )
+
+    assert response.status_code == 200
+    with client.app.state.session_factory() as db:
+        saved_project = db.get(ResumeProject, response.json()["profile_id"])
+        saved_analysis = db.get(ResumeProjectAnalysis, analysis_id)
+        persisted_snapshot = json.loads(saved_analysis.analysis_json)
+
+        for field, value in edited_project.items():
+            assert getattr(saved_project, field) == value
+
+        assert saved_project.analysis_id == analysis_id
+        assert saved_analysis.status == "confirmed"
+        assert persisted_snapshot["project"]["core"] == edited_project
+        assert persisted_snapshot["project"]["context"] == snapshot["project"]["context"]
+        assert persisted_snapshot["project"]["ownership"] == snapshot["project"]["ownership"]
+        assert persisted_snapshot["project"]["architecture"] == snapshot["project"]["architecture"]
+        assert persisted_snapshot["project"]["agent_details"] == snapshot["project"]["agent_details"]
+        assert persisted_snapshot["project"]["tradeoffs"] == snapshot["project"]["tradeoffs"]
+        assert persisted_snapshot["project"]["engineering"] == snapshot["project"]["engineering"]
+        assert persisted_snapshot["project"]["evaluation"] == snapshot["project"]["evaluation"]
+        assert persisted_snapshot["project"]["evolution"] == snapshot["project"]["evolution"]
+        assert persisted_snapshot["facts"] == snapshot["facts"]
+        assert persisted_snapshot["question_chain"] == snapshot["question_chain"]
+        assert persisted_snapshot["questions"] == snapshot["questions"]
+
+
 def test_profile_rejects_resume_owned_by_another_user(client):
     with client.app.state.session_factory() as db:
         db.add(User(id="other-user"))
+        db.flush()
         db.add(
             Resume(
                 id="other-resume",

@@ -6,7 +6,7 @@ from pathlib import Path
 from dataclasses import asdict
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .config import (
@@ -17,24 +17,40 @@ from .config import (
 )
 from .models import (
     AnswerAttempt,
+    AssessmentBatch,
     AssessmentRun,
     AssessmentObservation,
+    CandidateKnowledgeState,
+    CandidateProfile,
+    EvidenceSpan,
     InterviewQuestion,
+    InterviewReport,
     InterviewSession,
     InterviewTarget,
+    LearningRecommendation,
+    OperationJob,
+    OperationJobEvent,
+    ProfileSnapshot,
     Resume,
     ResumeSource,
     ResumeProject,
     ResumeProjectAnalysis,
     ResumeProjectQuestion,
+    RoleSkillRequirement,
     RubricObservation,
+    SkillCatalog,
     User,
+    utc_now,
 )
 from .assessment_engine import (
     AssessmentResponseError,
     build_explicit_unknown_assessment,
 )
 from .project_analysis import validate_analysis_evidence
+from .profile_engine import (
+    get_or_create_candidate_profile,
+    update_candidate_profile,
+)
 from .providers import (
     AssessmentProvider,
     AssessmentProviderError,
@@ -85,6 +101,107 @@ class ProjectAnalysisError(Exception):
 def _hash_payload(payload: dict) -> str:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _reconcile_confirmed_analysis_snapshot(
+    analysis_json: str,
+    confirmed_project: dict,
+) -> str:
+    try:
+        snapshot = json.loads(analysis_json) if analysis_json else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        snapshot = {}
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+
+    project_snapshot = snapshot.get("project")
+    if not isinstance(project_snapshot, dict):
+        project_snapshot = {}
+
+    project_snapshot["core"] = dict(confirmed_project)
+    snapshot["project"] = project_snapshot
+    if not snapshot.get("schema_version"):
+        snapshot["schema_version"] = "project-analysis-v2"
+    return json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+
+
+def _append_job_event(
+    db: Session,
+    job: OperationJob,
+    event_type: str,
+    progress: int,
+    message: str,
+) -> None:
+    last_sequence = db.scalar(
+        select(func.max(OperationJobEvent.sequence)).where(
+            OperationJobEvent.job_id == job.id
+        )
+    )
+    db.add(
+        OperationJobEvent(
+            id=str(uuid4()),
+            job_id=job.id,
+            sequence=(last_sequence or 0) + 1,
+            event_type=event_type,
+            progress=progress,
+            message=message,
+        )
+    )
+
+
+def _create_batch_job(
+    db: Session,
+    session: InterviewSession,
+    answers: list[AnswerAttempt],
+) -> OperationJob:
+    request_hash = _hash_payload(
+        {
+            "session_id": session.id,
+            "answers": [
+                {
+                    "id": answer.id,
+                    "status": answer.status,
+                    "hash": answer.answer_text_hash,
+                }
+                for answer in answers
+            ],
+        }
+    )
+    active_job = db.scalar(
+        select(OperationJob)
+        .where(
+            OperationJob.session_id == session.id,
+            OperationJob.operation_kind == "batch_assessment",
+            OperationJob.request_hash == request_hash,
+            OperationJob.status.in_(("pending", "running")),
+        )
+        .order_by(OperationJob.created_at.desc(), OperationJob.id.desc())
+    )
+    if active_job is not None:
+        return active_job
+    previous_attempt = db.scalar(
+        select(func.max(OperationJob.attempt_number)).where(
+            OperationJob.session_id == session.id,
+            OperationJob.operation_kind == "batch_assessment",
+        )
+    )
+    job = OperationJob(
+        id=str(uuid4()),
+        user_id=session.user_id,
+        session_id=session.id,
+        operation_kind="batch_assessment",
+        idempotency_key=f"{session.id}:{request_hash}:{(previous_attempt or 0) + 1}",
+        request_hash=request_hash,
+        status="pending",
+        progress=0,
+        current_stage="queued",
+        provider="assessment_provider",
+        attempt_number=(previous_attempt or 0) + 1,
+    )
+    db.add(job)
+    db.flush()
+    _append_job_event(db, job, "queued", 0, "已记录本场回答，等待分析")
+    return job
 
 
 def _signals_from_json(value: str) -> tuple[str, ...]:
@@ -184,6 +301,10 @@ def create_profile(db: Session, payload: ProfileCreate) -> dict:
                     source=source,
                 )
             )
+        analysis.analysis_json = _reconcile_confirmed_analysis_snapshot(
+            analysis.analysis_json,
+            payload.project.model_dump(),
+        )
         analysis.status = "confirmed"
 
     target = InterviewTarget(
@@ -473,6 +594,13 @@ def create_session(
         user_id=resume.user_id,
         resume_project_id=project.id,
         target_id=target.id,
+        profile_id=get_or_create_candidate_profile(
+            db,
+            user_id=resume.user_id,
+            direction=target.direction,
+            level=target.level,
+            target_title=target.target_title,
+        ).id,
         status="in_progress",
         current_question_index=0,
         total_questions=len(question_specs),
@@ -629,9 +757,25 @@ def _batch_result_response(
         for run in [_latest_assessment_run(db, answer.id)]
         if run is not None
     ]
+    job = None
+    session_id = answers[0].session_id if answers else None
+    if batch_id:
+        job = db.scalar(
+            select(OperationJob).where(OperationJob.assessment_batch_id == batch_id)
+        )
+    if job is None and session_id:
+        job = db.scalar(
+            select(OperationJob)
+            .where(OperationJob.session_id == session_id)
+            .order_by(OperationJob.created_at.desc(), OperationJob.id.desc())
+        )
     return {
         "status": _batch_status(runs) if runs else "valid",
         "batch_id": batch_id,
+        "job_id": job.id if job else None,
+        "job_status": job.status if job else None,
+        "job_error_code": job.error_code if job else None,
+        "job_error_message": job.error_message if job else None,
         "evaluated_count": len(runs),
         "total_count": total_count,
         "assessments": [
@@ -687,6 +831,35 @@ def assess_session(
             (run.batch_id for run in existing_runs.values() if run and run.batch_id),
             None,
         )
+        # Scoring may have succeeded before report/profile persistence failed.
+        # Rebuild derived records locally rather than calling the model again.
+        profile = db.get(CandidateProfile, session.profile_id) if session.profile_id else None
+        report_query = select(InterviewReport).where(
+            InterviewReport.session_id == session_id,
+            InterviewReport.status.in_(("ready", "partial")),
+        )
+        report_query = report_query.where(
+            InterviewReport.assessment_batch_id == batch_id
+            if batch_id
+            else InterviewReport.assessment_batch_id.is_(None)
+        )
+        report = db.scalar(report_query.order_by(InterviewReport.version.desc()))
+        if report is None or profile is None or profile.current_snapshot_id is None:
+            try:
+                if report is None:
+                    persist_interview_report(
+                        db,
+                        session_id,
+                        assessment_batch_id=batch_id,
+                        status="ready",
+                        commit=False,
+                    )
+                if profile is None or profile.current_snapshot_id is None:
+                    update_candidate_profile(db, session_id, commit=False)
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
         return _batch_result_response(db, answers, len(questions), batch_id)
     if not scored_answers:
         return _batch_result_response(db, answers, len(questions), None)
@@ -694,6 +867,33 @@ def assess_session(
     question_by_id = {question.id: question for question in questions}
     evaluator = getattr(assessment_provider, "evaluator", "siliconflow-blind-rubric-v1")
     batch_id = str(uuid4())
+    job = _create_batch_job(db, session, scored_answers)
+    if job.assessment_batch_id:
+        return _batch_result_response(
+            db,
+            answers,
+            len(questions),
+            job.assessment_batch_id,
+        )
+    batch = AssessmentBatch(
+        id=batch_id,
+        session_id=session.id,
+        operation_job_id=job.id,
+        attempt_number=job.attempt_number,
+        evaluator=evaluator,
+        status="pending",
+    )
+    db.add(batch)
+    db.flush()
+    job.assessment_batch_id = batch.id
+    db.commit()
+    job.status = "running"
+    job.started_at = utc_now()
+    job.current_stage = "scoring"
+    job.progress = 20
+    _append_job_event(db, job, "stage", 20, "正在分析本场回答")
+    db.commit()
+
     runs_by_answer: dict[str, AssessmentRun] = {}
     for answer in scored_answers:
         question = question_by_id[answer.question_id]
@@ -709,6 +909,7 @@ def assess_session(
             if existing_runs[answer.id] is not None
             else 1,
             batch_id=batch_id,
+            assessment_batch_id=batch.id,
         )
         db.add(run)
         runs_by_answer[answer.id] = run
@@ -759,28 +960,88 @@ def assess_session(
                 run.status = "invalid"
                 run.error_code = "invalid_evidence"
                 run.error_reason = "至少一个 Rubric 证据未通过完整性校验"
+        batch_status = _batch_status(list(runs_by_answer.values()))
+        persist_interview_report(
+            db,
+            session_id,
+            assessment_batch_id=batch_id,
+            status="ready" if batch_status == "valid" else "partial",
+            commit=False,
+        )
+        if batch_status == "valid":
+            update_candidate_profile(db, session_id, commit=False)
+        batch.status = "valid" if batch_status == "valid" else "partial"
+        batch.finished_at = utc_now()
+        if batch_status != "valid":
+            batch.error_code = "invalid_evidence"
+            batch.error_message = "部分回答的证据未通过校验，已保存可用结果"
+        job.status = "succeeded" if batch_status == "valid" else "partial"
+        job.progress = 100
+        job.current_stage = "completed"
+        job.finished_at = utc_now()
+        job.error_code = batch.error_code
+        job.error_message = batch.error_message
+        job.raw_response_json = json.dumps(
+            {"case_count": len(cases), "result_count": len(results)},
+            ensure_ascii=False,
+        )
+        _append_job_event(
+            db,
+            job,
+            "completed",
+            100,
+            "本场分析完成" if batch_status == "valid" else "本场分析完成，但部分回答未通过校验",
+        )
         db.commit()
     except AssessmentProviderError as exc:
-        for run in runs_by_answer.values():
-            if run.status == "pending":
-                run.error_code = exc.code
-                run.error_reason = str(exc)[:500]
-        db.commit()
+        _mark_batch_failed(db, job.id, batch.id, exc.code, str(exc), rejected=False)
     except AssessmentResponseError as exc:
-        for run in runs_by_answer.values():
-            if run.status == "pending":
-                run.status = "rejected"
-                run.error_code = exc.code
-                run.error_reason = str(exc)[:500]
-        db.commit()
+        _mark_batch_failed(db, job.id, batch.id, exc.code, str(exc), rejected=True)
     except Exception as exc:
-        for run in runs_by_answer.values():
-            if run.status == "pending":
-                run.error_code = "system_error"
-                run.error_reason = str(exc)[:500]
-        db.commit()
+        _mark_batch_failed(db, job.id, batch.id, "system_error", str(exc), rejected=False)
 
     return _batch_result_response(db, answers, len(questions), batch_id)
+
+
+def _mark_batch_failed(
+    db: Session,
+    job_id: str,
+    batch_id: str,
+    error_code: str,
+    error_message: str,
+    *,
+    rejected: bool,
+) -> None:
+    """Record failure after rolling back all in-flight scoring/report changes."""
+    db.rollback()
+    job = db.get(OperationJob, job_id)
+    batch = db.get(AssessmentBatch, batch_id)
+    if job is None or batch is None:
+        raise RuntimeError("assessment failure records are missing")
+    runs = list(
+        db.scalars(
+            select(AssessmentRun).where(
+                AssessmentRun.assessment_batch_id == batch_id
+            )
+        )
+    )
+    for run in runs:
+        if run.status == "pending":
+            if rejected:
+                run.status = "rejected"
+            run.error_code = error_code
+            run.error_reason = error_message[:500]
+    batch.status = "failed"
+    batch.error_code = error_code
+    batch.error_message = error_message[:500]
+    batch.finished_at = utc_now()
+    job.status = "failed"
+    job.current_stage = "failed"
+    job.error_code = error_code
+    job.error_message = error_message[:500]
+    job.finished_at = utc_now()
+    _append_job_event(db, job, "error", job.progress, error_message[:500])
+    db.commit()
 
 
 def _latest_assessment_run(db: Session, answer_id: str) -> AssessmentRun | None:
@@ -866,20 +1127,33 @@ def evaluate_answer(
 
 def _persist_rubric_result(db: Session, run: AssessmentRun, result) -> None:
     for item in result.rubric_items:
+        observation = RubricObservation(
+            id=str(uuid4()),
+            assessment_run_id=run.id,
+            answer_id=run.answer_id,
+            question_id=run.question_id,
+            rubric_id=item.rubric_id,
+            rubric_version=run.rubric_version,
+            level=item.level,
+            evidence_start=item.evidence_start,
+            evidence_end=item.evidence_end,
+            quoted_text=item.quoted_text,
+            answer_text_hash=item.answer_text_hash,
+            confidence=item.confidence,
+            validity=item.validity,
+            invalid_reason=item.invalid_reason,
+        )
+        db.add(observation)
+        db.flush()
         db.add(
-            RubricObservation(
+            EvidenceSpan(
                 id=str(uuid4()),
-                assessment_run_id=run.id,
+                observation_id=observation.id,
                 answer_id=run.answer_id,
-                question_id=run.question_id,
-                rubric_id=item.rubric_id,
-                rubric_version=run.rubric_version,
-                level=item.level,
-                evidence_start=item.evidence_start,
-                evidence_end=item.evidence_end,
+                start_offset=item.evidence_start,
+                end_offset=item.evidence_end,
                 quoted_text=item.quoted_text,
                 answer_text_hash=item.answer_text_hash,
-                confidence=item.confidence,
                 validity=item.validity,
                 invalid_reason=item.invalid_reason,
             )
@@ -980,7 +1254,11 @@ def _assessment_response(run: AssessmentRun | None, db: Session) -> dict | None:
     }
 
 
-def get_report(db: Session, session_id: str) -> dict:
+def _build_report_payload(
+    db: Session,
+    session_id: str,
+    assessment_batch_id: str | None = None,
+) -> dict:
     session = db.get(InterviewSession, session_id)
     if session is None:
         raise NotFoundError("session not found")
@@ -997,13 +1275,16 @@ def get_report(db: Session, session_id: str) -> dict:
     anchor_ids = {question.id for question in questions if question.is_anchor}
     anchor_answered = len({answer.question_id for answer in answers if answer.question_id in anchor_ids})
     answer_ids = [answer.id for answer in answers]
-    runs = list(
-        db.scalars(
-            select(AssessmentRun)
-            .where(AssessmentRun.answer_id.in_(answer_ids))
-            .order_by(AssessmentRun.attempt_number, AssessmentRun.created_at)
+    run_query = (
+        select(AssessmentRun)
+        .where(AssessmentRun.answer_id.in_(answer_ids))
+        .order_by(AssessmentRun.attempt_number, AssessmentRun.created_at)
+    ) if answer_ids else None
+    if run_query is not None and assessment_batch_id:
+        run_query = run_query.where(
+            AssessmentRun.assessment_batch_id == assessment_batch_id
         )
-    ) if answer_ids else []
+    runs = list(db.scalars(run_query)) if run_query is not None else []
     latest_runs: dict[str, AssessmentRun] = {}
     for run in runs:
         latest_runs[run.answer_id] = run
@@ -1118,3 +1399,281 @@ def get_report(db: Session, session_id: str) -> dict:
         "assessment_status_counts": status_counts,
         "rubric_items": rubric_items,
     }
+
+
+def persist_interview_report(
+    db: Session,
+    session_id: str,
+    *,
+    assessment_batch_id: str | None = None,
+    status: str = "ready",
+    commit: bool = True,
+) -> InterviewReport:
+    session = db.get(InterviewSession, session_id)
+    if session is None:
+        raise NotFoundError("session not found")
+    latest_version = db.scalar(
+        select(func.max(InterviewReport.version)).where(
+            InterviewReport.session_id == session_id
+        )
+    )
+    report_payload = _build_report_payload(
+        db,
+        session_id,
+        assessment_batch_id=assessment_batch_id,
+    )
+    latest_run = db.scalar(
+        select(AssessmentRun)
+        .where(
+            or_(
+                AssessmentRun.assessment_batch_id == assessment_batch_id,
+                AssessmentRun.batch_id == assessment_batch_id,
+            )
+        )
+        .order_by(AssessmentRun.created_at.desc())
+    ) if assessment_batch_id else None
+    report = InterviewReport(
+        id=str(uuid4()),
+        session_id=session_id,
+        assessment_run_id=latest_run.id if latest_run else None,
+        assessment_batch_id=assessment_batch_id,
+        version=(latest_version or 0) + 1,
+        status=status,
+        report_json=json.dumps(report_payload, ensure_ascii=False, sort_keys=True),
+    )
+    db.add(report)
+    db.flush()
+    session.current_report_id = report.id
+    if latest_run is not None:
+        session.current_assessment_run_id = latest_run.id
+    session.current_assessment_batch_id = assessment_batch_id
+    if commit:
+        db.commit()
+    return report
+
+
+def get_persisted_report(db: Session, session_id: str) -> dict | None:
+    report = db.scalar(
+        select(InterviewReport)
+        .where(
+            InterviewReport.session_id == session_id,
+            InterviewReport.status.in_(("ready", "partial")),
+        )
+        .order_by(InterviewReport.version.desc())
+    )
+    if report is None:
+        return None
+    return json.loads(report.report_json)
+
+
+def get_report(db: Session, session_id: str) -> dict:
+    session = db.get(InterviewSession, session_id)
+    if session is None:
+        raise NotFoundError("session not found")
+    return get_persisted_report(db, session_id) or _build_report_payload(db, session_id)
+
+
+def list_interview_history(db: Session) -> list[dict]:
+    sessions = list(
+        db.scalars(
+            select(InterviewSession).order_by(
+                InterviewSession.created_at.desc(), InterviewSession.id.desc()
+            )
+        )
+    )
+    history = []
+    for session in sessions:
+        question_count = db.scalar(
+            select(func.count(InterviewQuestion.id)).where(
+                InterviewQuestion.session_id == session.id
+            )
+        ) or 0
+        answered_count = db.scalar(
+            select(func.count(func.distinct(AnswerAttempt.question_id))).where(
+                AnswerAttempt.session_id == session.id
+            )
+        ) or 0
+        report = db.scalar(
+            select(InterviewReport)
+            .where(InterviewReport.session_id == session.id)
+            .order_by(InterviewReport.version.desc())
+        )
+        job = db.scalar(
+            select(OperationJob)
+            .where(OperationJob.session_id == session.id)
+            .order_by(OperationJob.created_at.desc(), OperationJob.id.desc())
+        )
+        target = db.get(InterviewTarget, session.target_id)
+        history.append(
+            {
+                "session_id": session.id,
+                "status": session.status,
+                "direction": target.direction if target else None,
+                "target_title": target.target_title if target else None,
+                "completed": answered_count,
+                "total": question_count,
+                "report_status": report.status if report else None,
+                "analysis_status": job.status if job else None,
+                "created_at": session.created_at,
+                "updated_at": session.updated_at,
+            }
+        )
+    return history
+
+
+def _recommendation_response(db: Session, recommendation: LearningRecommendation) -> dict:
+    skill = db.get(SkillCatalog, recommendation.skill_id)
+    return {
+        "id": recommendation.id,
+        "skill_id": recommendation.skill_id,
+        "skill_name": skill.canonical_name if skill else recommendation.skill_id,
+        "priority": recommendation.priority,
+        "reason": recommendation.reason,
+        "actions": json.loads(recommendation.actions_json),
+        "success_criteria": json.loads(recommendation.success_criteria_json),
+        "status": recommendation.status,
+        "recommended_review_at": recommendation.recommended_review_at,
+    }
+
+
+def get_profile_summary(db: Session, profile_id: str) -> dict:
+    profile = db.get(CandidateProfile, profile_id)
+    if profile is None:
+        raise NotFoundError("profile not found")
+    states = list(
+        db.scalars(
+            select(CandidateKnowledgeState)
+            .where(CandidateKnowledgeState.profile_id == profile.id)
+            .order_by(CandidateKnowledgeState.current_level.asc())
+        )
+    )
+    skills = []
+    for state in states:
+        skill = db.get(SkillCatalog, state.skill_id)
+        requirement = db.scalar(
+            select(RoleSkillRequirement).where(
+                RoleSkillRequirement.direction == profile.direction,
+                RoleSkillRequirement.level == profile.level,
+                RoleSkillRequirement.skill_id == state.skill_id,
+            )
+        )
+        skills.append(
+            {
+                "skill_id": state.skill_id,
+                "skill_name": skill.canonical_name if skill else state.skill_id,
+                "category": skill.category if skill else "其他",
+                "level": state.current_level,
+                "confidence": state.confidence,
+                "sample_count": state.valid_sample_count,
+                "trend": state.trend,
+                "target_level": requirement.target_level if requirement else None,
+                "last_session_id": state.last_session_id,
+            }
+        )
+    recommendations = []
+    if profile.current_snapshot_id:
+        recommendations = [
+            _recommendation_response(db, item)
+            for item in db.scalars(
+                select(LearningRecommendation)
+                .where(
+                    LearningRecommendation.profile_id == profile.id,
+                    LearningRecommendation.profile_snapshot_id == profile.current_snapshot_id,
+                )
+            )
+        ]
+        priority_order = {"high": 0, "medium": 1, "insufficient_data": 2, "low": 3}
+        recommendations.sort(key=lambda item: priority_order.get(item["priority"], 4))
+    latest_state = max(
+        (state for state in states if state.last_assessed_at is not None),
+        key=lambda state: state.last_assessed_at,
+        default=None,
+    )
+    last_session_id = latest_state.last_session_id if latest_state else None
+    return {
+        "profile_id": profile.id,
+        "direction": profile.direction,
+        "level": profile.level,
+        "target_title": profile.target_title,
+        "summary": profile.summary,
+        "last_session_id": last_session_id,
+        "skills": skills,
+        "recommendations": recommendations,
+        "updated_at": profile.updated_at,
+    }
+
+
+def get_profile_history(db: Session, profile_id: str) -> list[dict]:
+    profile = db.get(CandidateProfile, profile_id)
+    if profile is None:
+        raise NotFoundError("profile not found")
+    snapshots = list(
+        db.scalars(
+            select(ProfileSnapshot)
+            .where(ProfileSnapshot.profile_id == profile_id)
+            .order_by(ProfileSnapshot.version.desc())
+        )
+    )
+    return [
+        {
+            "id": snapshot.id,
+            "profile_id": snapshot.profile_id,
+            "source_session_id": snapshot.source_session_id,
+            "version": snapshot.version,
+            "profile": json.loads(snapshot.profile_json),
+            "created_at": snapshot.created_at,
+        }
+        for snapshot in snapshots
+    ]
+
+
+def get_operation_job(db: Session, job_id: str) -> dict:
+    job = db.get(OperationJob, job_id)
+    if job is None:
+        raise NotFoundError("operation job not found")
+    events = list(
+        db.scalars(
+            select(OperationJobEvent)
+            .where(OperationJobEvent.job_id == job.id)
+            .order_by(OperationJobEvent.sequence)
+        )
+    )
+    return {
+        "id": job.id,
+        "operation_kind": job.operation_kind,
+        "session_id": job.session_id,
+        "assessment_batch_id": job.assessment_batch_id,
+        "status": job.status,
+        "progress": job.progress,
+        "current_stage": job.current_stage,
+        "error_code": job.error_code,
+        "error_message": job.error_message,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "events": [
+            {
+                "sequence": event.sequence,
+                "event_type": event.event_type,
+                "progress": event.progress,
+                "message": event.message,
+                "created_at": event.created_at,
+            }
+            for event in events
+        ],
+    }
+
+
+def update_recommendation_status(
+    db: Session,
+    recommendation_id: str,
+    status: str,
+) -> dict:
+    if status not in {"recommended", "in_progress", "completed", "dismissed"}:
+        raise InvalidAnswerError("unsupported recommendation status")
+    recommendation = db.get(LearningRecommendation, recommendation_id)
+    if recommendation is None:
+        raise NotFoundError("recommendation not found")
+    recommendation.status = status
+    db.commit()
+    return _recommendation_response(db, recommendation)
