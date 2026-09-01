@@ -259,6 +259,20 @@ def test_evidence_must_exist_in_resume_text():
     assert validated.evidence[0].quote == "负责检索链路和线上监控"
 
 
+def test_validate_analysis_evidence_marks_nested_invalid_quote_and_preserves_reason():
+    resume_text = "负责检索链路和线上监控，使用查询改写、混合检索和重排提升召回。"
+    payload = rich_analysis_payload()
+    payload["facts"][0]["evidence"][0]["quote"] = "模型虚构的证据"
+    result = AgentProjectAnalysisResponse.model_validate(payload)
+
+    validated = validate_analysis_evidence(result, resume_text)
+    evidence = validated.facts[0].evidence[0]
+
+    assert evidence.quote == "模型虚构的证据"
+    assert evidence.status == "invalid"
+    assert evidence.invalid_reason
+
+
 def test_siliconflow_provider_reads_content_from_chat_response():
     requests = []
 

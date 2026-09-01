@@ -70,6 +70,8 @@ ProjectFactStatus = Literal[
 
 class ProjectFactEvidence(BaseModel):
     quote: str = Field(min_length=1, max_length=2000)
+    status: Literal["valid", "invalid"] = "valid"
+    invalid_reason: str | None = Field(default=None, max_length=1000)
     start_offset: int | None = None
     end_offset: int | None = None
     text_hash: str | None = None

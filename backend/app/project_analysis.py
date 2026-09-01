@@ -341,4 +341,9 @@ def validate_analysis_evidence(
     for evidence in result.evidence:
         if evidence.quote not in resume_text:
             raise ValueError("analysis evidence was not found in resume text")
-    return result
+
+    normalized = normalize_project_analysis_payload(
+        result.model_dump(),
+        resume_text,
+    )
+    return AgentProjectAnalysisResponse.model_validate(normalized)

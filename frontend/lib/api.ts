@@ -30,18 +30,24 @@ export type ProjectFactStatus =
   | "conflicting"
   | "rejected";
 
+export type ProjectFactEvidenceStatus = "valid" | "invalid";
+
+export type ProjectFactEvidence = {
+  quote: string;
+  status: ProjectFactEvidenceStatus;
+  invalid_reason?: string | null;
+  start_offset?: number | null;
+  end_offset?: number | null;
+  text_hash?: string | null;
+};
+
 export type ProjectFact = {
   fact_id: string;
   field: string;
   value: string;
   status: ProjectFactStatus;
   source_type: string;
-  evidence: Array<{
-    quote: string;
-    start_offset?: number | null;
-    end_offset?: number | null;
-    text_hash?: string | null;
-  }>;
+  evidence: ProjectFactEvidence[];
   confidence: number;
   user_confirmed: boolean;
 };
