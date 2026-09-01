@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.models import Resume, ResumeProject, ResumeProjectAnalysis, ResumeProjectQuestion
+import app.project_analysis as project_analysis
 from app.project_analysis import clean_model_json, parse_model_analysis, validate_analysis_evidence
 from app.providers import ProjectAnalysisProviderError, SiliconFlowProjectAnalysisProvider
 from app.schemas import AgentProjectAnalysisResponse
@@ -177,6 +178,46 @@ def test_clean_model_json_removes_markdown_fence():
     fence = chr(96) * 3
 
     assert clean_model_json(fence + "json\n{\"ok\": true}\n" + fence) == '{"ok": true}'
+
+
+def test_normalizes_rich_project_fields_and_fact_statuses():
+    resume_text = "负责检索链路和线上监控，使用查询改写、混合检索和重排提升召回。"
+
+    result = project_analysis.normalize_project_analysis_payload(
+        rich_analysis_payload(),
+        resume_text,
+    )
+
+    assert result["schema_version"] == "project-analysis-v2"
+    assert result["project"]["ownership"]["owned_modules"] == "检索链路与线上监控"
+    assert result["project"]["architecture"]["components"] == ["API", "Retriever", "Reranker"]
+    assert result["facts"][0]["status"] == "extracted"
+    assert result["facts"][0]["evidence"][0]["status"] == "valid"
+
+
+def test_rejects_evidence_quote_that_is_not_in_resume():
+    resume_text = "负责检索链路和线上监控，使用查询改写、混合检索和重排提升召回。"
+    payload = rich_analysis_payload()
+    payload["facts"][0]["evidence"][0]["quote"] = "不存在于简历中的证据"
+
+    result = project_analysis.normalize_project_analysis_payload(payload, resume_text)
+
+    assert len(result["facts"][0]["evidence"]) == 1
+    assert result["facts"][0]["evidence"][0]["status"] == "invalid"
+    assert result["facts"][0]["evidence"][0]["invalid_reason"]
+
+
+def test_links_three_project_questions_in_order():
+    result = project_analysis.normalize_project_analysis_payload(
+        valid_analysis_payload(),
+        "负责检索链路和线上监控。",
+    )
+    chain = result["question_chain"]
+
+    assert len(chain) == 3
+    assert [item["order"] for item in chain] == [1, 2, 3]
+    assert [item["depends_on"] for item in chain] == [None, 1, 2]
+    assert all(item["question_group"] == "project" for item in chain)
 
 
 def test_parse_model_analysis_normalizes_common_deepseek_shape_variants():
