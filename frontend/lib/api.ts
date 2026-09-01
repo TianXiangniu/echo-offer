@@ -85,6 +85,30 @@ export type ProjectQuestionInput = {
   signals: string[];
 };
 
+export type MissingInformationKey =
+  | keyof ProjectInput
+  | "context.stage"
+  | "context.scale"
+  | "context.users"
+  | "context.timeline"
+  | "ownership.owned_modules"
+  | "ownership.collaborators"
+  | "ownership.scope"
+  | "architecture.pipeline"
+  | "architecture.tools"
+  | "architecture.retrieval"
+  | "agent_details.loop"
+  | "agent_details.tools"
+  | "tradeoffs.chosen_approach"
+  | "tradeoffs.rejected_options"
+  | "engineering.latency_diagnosis"
+  | "engineering.output_safety"
+  | "evaluation.metrics"
+  | "evaluation.baseline"
+  | "evolution.iterations";
+
+export type MissingInformationItem = MissingInformationKey | string;
+
 export type AgentProjectAnalysis = {
   analysis_id: string;
   resume_id: string;
@@ -95,7 +119,7 @@ export type AgentProjectAnalysis = {
   confidence: number;
   evidence: Array<{ field: keyof ProjectInput; quote: string }>;
   questions: ProjectQuestionInput[];
-  missing_information: string[];
+  missing_information: MissingInformationItem[];
   facts: ProjectFact[];
   question_chain: ProjectQuestionDetail[];
 };
