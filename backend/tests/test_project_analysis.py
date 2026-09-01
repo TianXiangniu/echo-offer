@@ -82,6 +82,9 @@ def test_build_user_prompt_covers_rich_project_analysis_contract():
     assert "三道" in prompt or "three" in prompt
     assert "依次" in prompt or "linked" in prompt or "chain" in prompt
     assert "只使用已确认或已提取的字段" in prompt or "confirmed" in prompt
+    assert "status 为 extracted 或 confirmed" in prompt
+    assert "inferred、missing、conflicting" in prompt
+    assert "开放确认" in prompt or "confirmation" in prompt
     assert "token" in prompt or "空对象" in prompt or "omit irrelevant" in prompt
     assert "【" not in prompt
 
@@ -158,6 +161,34 @@ def rich_analysis_payload():
             "followup_if_incomplete": "请先说明你的职责边界。",
             "followup_if_conflicting": "请澄清你和团队的分工。",
             "difficulty": "medium",
+        },
+        {
+            "order": 2,
+            "question_group": "project",
+            "chain_id": "project-tradeoffs",
+            "prompt": "为什么选择查询改写、混合检索和重排的组合？",
+            "intent": "确认方案取舍",
+            "depends_on": 1,
+            "source_fields": ["core_solution", "tradeoffs.chosen_approach"],
+            "source_fact_ids": [],
+            "expected_answer_points": ["备选方案", "取舍", "选择原因"],
+            "followup_if_incomplete": "请补充你比较过的备选方案。",
+            "followup_if_conflicting": "请说明为什么没有采用其他方案。",
+            "difficulty": "medium",
+        },
+        {
+            "order": 3,
+            "question_group": "project",
+            "chain_id": "project-evaluation",
+            "prompt": "你如何验证召回质量和延迟改进是真实稳定的？",
+            "intent": "确认评估方法",
+            "depends_on": 2,
+            "source_fields": ["engineering_challenges", "evaluation.metrics"],
+            "source_fact_ids": [],
+            "expected_answer_points": ["指标", "基线", "实验或线上验证"],
+            "followup_if_incomplete": "请说明你是如何做效果验证的。",
+            "followup_if_conflicting": "请说明验证结果和线上表现是否一致。",
+            "difficulty": "medium",
         }
     ]
     return payload
@@ -226,10 +257,42 @@ def test_rejects_evidence_quote_that_is_not_in_resume():
     assert result["facts"][0]["evidence"][0]["invalid_reason"]
 
 
-def test_links_three_project_questions_in_order():
+@pytest.mark.parametrize(
+    "payload_mutator",
+    [
+        lambda payload: payload.pop("question_chain", None),
+        lambda payload: payload.__setitem__(
+            "question_chain",
+            [
+                {
+                    "order": 1,
+                    "question_group": "project",
+                    "chain_id": "broken",
+                    "prompt": "只有一个问题",
+                }
+            ],
+        ),
+    ],
+)
+def test_normalize_project_analysis_payload_keeps_missing_or_malformed_question_chain_empty(
+    payload_mutator,
+):
+    payload = valid_analysis_payload()
+    payload_mutator(payload)
+
     result = project_analysis.normalize_project_analysis_payload(
-        valid_analysis_payload(),
+        payload,
         "负责检索链路和线上监控。",
+    )
+
+    assert result["question_chain"] == []
+    assert AgentProjectAnalysisResponse.model_validate(result).question_chain == []
+
+
+def test_normalize_project_analysis_payload_preserves_valid_question_chain():
+    result = project_analysis.normalize_project_analysis_payload(
+        rich_analysis_payload(),
+        "负责检索链路和线上监控，使用查询改写、混合检索和重排提升召回。",
     )
     chain = result["question_chain"]
 

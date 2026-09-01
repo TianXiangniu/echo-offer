@@ -1,6 +1,8 @@
 import json
 
-from .schemas import AgentProjectAnalysisResponse
+from pydantic import ValidationError
+
+from .schemas import AgentProjectAnalysisResponse, ProjectQuestionDetail
 
 
 SYSTEM_PROMPT = """你是简历项目分析器。
@@ -26,6 +28,8 @@ scale 要写清楚规模、流量、数据量、并发、延迟或影响范围�
 tradeoffs 要写清楚选型取舍、备选方案和放弃原因；
 evaluation 要写清楚验证方法、指标、基线、实验或线上验证方式；
 unknown 信息保持为空字符串或空对象，并写入 missing_information，不要猜测。
+每个 project 问题及其前提只能使用 status 为 extracted 或 confirmed 的 facts；
+status 为 inferred、missing、conflicting 的 facts 只能作为开放确认提问的线索，不能作为已确认前提。
 
 facts 必须是对象数组，每条 fact 要有 fact_id、field、value、status、source_type、evidence、confidence、user_confirmed；
 status 只能使用 extracted、confirmed、inferred、missing、conflicting、rejected 之一；
@@ -247,28 +251,25 @@ def _normalize_fact_payload(fact: object, resume_text: str) -> dict:
     return normalized_fact
 
 
-def _normalize_question_chain(
-    questions: list[dict],
-    question_chain: object,
-) -> list[dict]:
-    raw_chain = question_chain if isinstance(question_chain, list) else []
+def _normalize_question_chain(question_chain: object) -> list[dict]:
+    if not isinstance(question_chain, list) or len(question_chain) != 3:
+        return []
+
     normalized_chain: list[dict] = []
-    for index, question in enumerate(questions[:3], start=1):
-        raw_item = raw_chain[index - 1] if index - 1 < len(raw_chain) else None
-        normalized_item = dict(raw_item) if isinstance(raw_item, dict) else {}
-        normalized_item["order"] = index
-        normalized_item["question_group"] = "project"
-        normalized_item["depends_on"] = None if index == 1 else index - 1
-        normalized_item["chain_id"] = (
-            _model_value_to_text(normalized_item.get("chain_id"))
-            or _model_value_to_text(question.get("knowledge_point_id"))
-            or f"project-question-{index}"
+    for expected_order, raw_item in enumerate(question_chain, start=1):
+        if not isinstance(raw_item, dict):
+            return []
+        normalized_item = dict(raw_item)
+        normalized_item["order"] = normalized_item.get("order", expected_order)
+        normalized_item["question_group"] = _model_value_to_text(
+            normalized_item.get("question_group")
         )
-        normalized_item["prompt"] = (
-            _model_value_to_text(normalized_item.get("prompt"))
-            or _model_value_to_text(question.get("prompt"))
+        normalized_item["chain_id"] = _model_value_to_text(
+            normalized_item.get("chain_id")
         )
+        normalized_item["prompt"] = _model_value_to_text(normalized_item.get("prompt"))
         normalized_item["intent"] = _model_value_to_text(normalized_item.get("intent"))
+        normalized_item["depends_on"] = normalized_item.get("depends_on")
         source_fields = normalized_item.get("source_fields")
         if isinstance(source_fields, list):
             normalized_item["source_fields"] = [
@@ -296,8 +297,21 @@ def _normalize_question_chain(
         normalized_item["followup_if_conflicting"] = _model_value_to_text(
             normalized_item.get("followup_if_conflicting")
         )
-        normalized_item["difficulty"] = normalized_item.get("difficulty") or "medium"
-        normalized_chain.append(normalized_item)
+        normalized_item["difficulty"] = _model_value_to_text(
+            normalized_item.get("difficulty")
+        ) or "medium"
+        try:
+            validated_item = ProjectQuestionDetail.model_validate(normalized_item)
+        except ValidationError:
+            return []
+        normalized_chain.append(validated_item.model_dump())
+
+    if [item["order"] for item in normalized_chain] != [1, 2, 3]:
+        return []
+    if [item["depends_on"] for item in normalized_chain] != [None, 1, 2]:
+        return []
+    if any(item["question_group"] != "project" for item in normalized_chain):
+        return []
     return normalized_chain
 
 
@@ -325,11 +339,7 @@ def normalize_project_analysis_payload(payload: object, resume_text: str) -> dic
     else:
         normalized["facts"] = []
 
-    questions = normalized.get("questions", [])
-    if not isinstance(questions, list):
-        questions = []
     normalized["question_chain"] = _normalize_question_chain(
-        questions,
         normalized.get("question_chain", []),
     )
 
