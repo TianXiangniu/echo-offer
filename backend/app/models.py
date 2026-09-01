@@ -120,6 +120,17 @@ class InterviewSession(Base):
     total_questions: Mapped[int] = mapped_column(Integer, default=8)
     workflow_version: Mapped[str] = mapped_column(String(40), default="alpha-local-v1")
     session_version: Mapped[int] = mapped_column(Integer, default=1)
+    profile_id: Mapped[str | None] = mapped_column(
+        ForeignKey("candidate_profiles.id"), index=True, nullable=True
+    )
+    current_assessment_run_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
+    current_assessment_batch_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
+    current_report_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -193,7 +204,28 @@ class AssessmentRun(Base):
     error_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt_number: Mapped[int] = mapped_column(Integer, default=1)
     batch_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    assessment_batch_id: Mapped[str | None] = mapped_column(
+        ForeignKey("assessment_batches.id"), index=True, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AssessmentBatch(Base):
+    __tablename__ = "assessment_batches"
+    __table_args__ = (
+        UniqueConstraint("session_id", "attempt_number", name="uq_assessment_batch_attempt"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("interview_sessions.id"), index=True)
+    operation_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, default=1)
+    evaluator: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RubricObservation(Base):
@@ -217,3 +249,194 @@ class RubricObservation(Base):
     validity: Mapped[str] = mapped_column(String(30), default="valid")
     invalid_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class OperationJob(Base):
+    __tablename__ = "operation_jobs"
+    __table_args__ = (
+        UniqueConstraint("operation_kind", "idempotency_key", name="uq_operation_idempotency"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("interview_sessions.id"), index=True, nullable=True
+    )
+    assessment_batch_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    operation_kind: Mapped[str] = mapped_column(String(60), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    current_stage: Mapped[str] = mapped_column(String(80), default="queued")
+    provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, default=1)
+    raw_response_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OperationJobEvent(Base):
+    __tablename__ = "operation_job_events"
+    __table_args__ = (
+        UniqueConstraint("job_id", "sequence", name="uq_operation_event_sequence"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("operation_jobs.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(30))
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class EvidenceSpan(Base):
+    __tablename__ = "evidence_spans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    observation_id: Mapped[str] = mapped_column(ForeignKey("rubric_observations.id"), index=True)
+    answer_id: Mapped[str] = mapped_column(ForeignKey("answer_attempts.id"), index=True)
+    start_offset: Mapped[int] = mapped_column(Integer)
+    end_offset: Mapped[int] = mapped_column(Integer)
+    quoted_text: Mapped[str] = mapped_column(Text)
+    answer_text_hash: Mapped[str] = mapped_column(String(64))
+    validity: Mapped[str] = mapped_column(String(30), default="valid")
+    invalid_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class InterviewReport(Base):
+    __tablename__ = "interview_reports"
+    __table_args__ = (
+        UniqueConstraint("session_id", "version", name="uq_report_session_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("interview_sessions.id"), index=True)
+    assessment_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    assessment_batch_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    report_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SkillCatalog(Base):
+    __tablename__ = "skill_catalog"
+    __table_args__ = (
+        UniqueConstraint("canonical_name", name="uq_skill_canonical_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    canonical_name: Mapped[str] = mapped_column(String(120))
+    category: Mapped[str] = mapped_column(String(80), default="general")
+    aliases_json: Mapped[str] = mapped_column(Text, default="[]")
+    description: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class QuestionSkill(Base):
+    __tablename__ = "question_skills"
+    __table_args__ = (
+        UniqueConstraint("question_id", "skill_id", name="uq_question_skill"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    question_id: Mapped[str] = mapped_column(ForeignKey("interview_questions.id"), index=True)
+    skill_id: Mapped[str] = mapped_column(ForeignKey("skill_catalog.id"), index=True)
+    weight: Mapped[float] = mapped_column(default=1.0)
+
+
+class RoleSkillRequirement(Base):
+    __tablename__ = "role_skill_requirements"
+    __table_args__ = (
+        UniqueConstraint("direction", "level", "skill_id", name="uq_role_skill_requirement"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    direction: Mapped[str] = mapped_column(String(80), index=True)
+    level: Mapped[str] = mapped_column(String(80), index=True)
+    skill_id: Mapped[str] = mapped_column(ForeignKey("skill_catalog.id"), index=True)
+    target_level: Mapped[int] = mapped_column(Integer)
+    importance_weight: Mapped[float] = mapped_column(default=1.0)
+
+
+class CandidateProfile(Base):
+    __tablename__ = "candidate_profiles"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "direction", "level", "target_title",
+            name="uq_candidate_profile_scope",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    direction: Mapped[str] = mapped_column(String(80), index=True)
+    level: Mapped[str] = mapped_column(String(80), index=True)
+    target_title: Mapped[str] = mapped_column(String(120))
+    current_snapshot_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class CandidateKnowledgeState(Base):
+    __tablename__ = "candidate_knowledge_states"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "skill_id", name="uq_candidate_profile_skill_state"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    profile_id: Mapped[str] = mapped_column(ForeignKey("candidate_profiles.id"), index=True)
+    skill_id: Mapped[str] = mapped_column(ForeignKey("skill_catalog.id"), index=True)
+    current_level: Mapped[int] = mapped_column(Integer, default=0)
+    confidence: Mapped[float] = mapped_column(default=0.0)
+    valid_sample_count: Mapped[int] = mapped_column(Integer, default=0)
+    trend: Mapped[str] = mapped_column(String(20), default="insufficient_data")
+    serious_error_count: Mapped[int] = mapped_column(Integer, default=0)
+    first_assessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_assessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class ProfileSnapshot(Base):
+    __tablename__ = "profile_snapshots"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "version", name="uq_profile_snapshot_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    profile_id: Mapped[str] = mapped_column(ForeignKey("candidate_profiles.id"), index=True)
+    source_session_id: Mapped[str] = mapped_column(ForeignKey("interview_sessions.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    profile_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LearningRecommendation(Base):
+    __tablename__ = "learning_recommendations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    profile_id: Mapped[str] = mapped_column(ForeignKey("candidate_profiles.id"), index=True)
+    profile_snapshot_id: Mapped[str] = mapped_column(ForeignKey("profile_snapshots.id"), index=True)
+    skill_id: Mapped[str] = mapped_column(ForeignKey("skill_catalog.id"), index=True)
+    priority: Mapped[str] = mapped_column(String(20), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    actions_json: Mapped[str] = mapped_column(Text, default="[]")
+    success_criteria_json: Mapped[str] = mapped_column(Text, default="[]")
+    recommended_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="recommended", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .config import (
@@ -34,9 +35,15 @@ from .schemas import (
     AgentProjectAnalysisRequest,
     AgentProjectAnalysisResponseEnvelope,
     ProfileCreate,
+    ProfileSnapshotResponse,
+    ProfileSummaryResponse,
+    RecommendationStatusUpdate,
     ProfileResponse,
     ResumeParseResponse,
     ReportResponse,
+    InterviewHistoryItem,
+    LearningRecommendationResponse,
+    OperationJobResponse,
     SessionCreate,
     SessionCreateResponse,
     SessionView,
@@ -53,10 +60,15 @@ from .services import (
     create_profile,
     create_session,
     get_report,
+    get_profile_history,
+    get_profile_summary,
+    list_interview_history,
     get_session_view,
     parse_and_store_resume,
     submit_answer,
     stream_resume_project_analysis,
+    update_recommendation_status,
+    get_operation_job,
 )
 
 
@@ -67,7 +79,8 @@ def create_app(
     assessment_provider: AssessmentProvider | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Agent Echo API", version=WORKFLOW_VERSION)
-    _, session_factory = create_database(database_url or DEFAULT_DATABASE_URL)
+    engine, session_factory = create_database(database_url or DEFAULT_DATABASE_URL)
+    app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.upload_root = upload_root or DEFAULT_UPLOAD_ROOT
     app.state.assessment_provider = assessment_provider or SiliconFlowAssessmentProvider(
@@ -155,7 +168,17 @@ def create_app(
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "workflow_version": WORKFLOW_VERSION}
+        try:
+            with app.state.engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+            database_status = "connected"
+        except Exception:
+            database_status = "unavailable"
+        return {
+            "status": "ok" if database_status == "connected" else "degraded",
+            "workflow_version": WORKFLOW_VERSION,
+            "database": database_status,
+        }
 
     @app.post("/api/profile", response_model=ProfileResponse)
     def profile(payload: ProfileCreate, db: Session = Depends(get_db)):
@@ -212,6 +235,29 @@ def create_app(
     def session(payload: SessionCreate, db: Session = Depends(get_db)):
         return create_session(db, payload.profile_id)
 
+    @app.get("/api/interviews/history", response_model=list[InterviewHistoryItem])
+    def interview_history(db: Session = Depends(get_db)):
+        return list_interview_history(db)
+
+    @app.get("/api/profiles/{profile_id}/summary", response_model=ProfileSummaryResponse)
+    def profile_summary(profile_id: str, db: Session = Depends(get_db)):
+        return get_profile_summary(db, profile_id)
+
+    @app.get("/api/profiles/{profile_id}/history", response_model=list[ProfileSnapshotResponse])
+    def profile_history(profile_id: str, db: Session = Depends(get_db)):
+        return get_profile_history(db, profile_id)
+
+    @app.patch(
+        "/api/recommendations/{recommendation_id}",
+        response_model=LearningRecommendationResponse,
+    )
+    def recommendation_status(
+        recommendation_id: str,
+        payload: RecommendationStatusUpdate,
+        db: Session = Depends(get_db),
+    ):
+        return update_recommendation_status(db, recommendation_id, payload.status)
+
     @app.get("/api/sessions/{session_id}", response_model=SessionView)
     def session_view(session_id: str, db: Session = Depends(get_db)):
         return get_session_view(db, session_id)
@@ -234,6 +280,10 @@ def create_app(
     @app.get("/api/sessions/{session_id}/report", response_model=ReportResponse)
     def report(session_id: str, db: Session = Depends(get_db)):
         return get_report(db, session_id)
+
+    @app.get("/api/jobs/{job_id}", response_model=OperationJobResponse)
+    def operation_job(job_id: str, db: Session = Depends(get_db)):
+        return get_operation_job(db, job_id)
 
     return app
 
