@@ -11,6 +11,58 @@ export type ProjectInput = {
   quantified_results: string;
 };
 
+export type ProjectAnalysisDetails = {
+  context?: Record<string, unknown>;
+  ownership?: Record<string, unknown>;
+  architecture?: Record<string, unknown>;
+  agent_details?: Record<string, unknown>;
+  tradeoffs?: Record<string, unknown>;
+  engineering?: Record<string, unknown>;
+  evaluation?: Record<string, unknown>;
+  evolution?: Record<string, unknown>;
+};
+
+export type ProjectFactStatus =
+  | "extracted"
+  | "confirmed"
+  | "inferred"
+  | "missing"
+  | "conflicting"
+  | "rejected";
+
+export type ProjectFact = {
+  fact_id: string;
+  field: string;
+  value: string;
+  status: ProjectFactStatus;
+  source_type: string;
+  evidence: Array<{
+    quote: string;
+    start_offset?: number | null;
+    end_offset?: number | null;
+    text_hash?: string | null;
+  }>;
+  confidence: number;
+  user_confirmed: boolean;
+};
+
+export type ProjectQuestionGroup = "project" | "fixed";
+
+export type ProjectQuestionDetail = {
+  order: number;
+  question_group: ProjectQuestionGroup;
+  chain_id: string;
+  prompt: string;
+  intent: string;
+  depends_on: number | null;
+  source_fields: string[];
+  source_fact_ids: string[];
+  expected_answer_points: string[];
+  followup_if_incomplete: string;
+  followup_if_conflicting: string;
+  difficulty: "easy" | "medium" | "hard";
+};
+
 export type ProfileResponse = {
   profile_id: string;
   user_id: string;
@@ -32,12 +84,14 @@ export type AgentProjectAnalysis = {
   resume_id: string;
   resume_text_hash: string;
   status: "draft";
-  project: ProjectInput;
+  project: ProjectInput & ProjectAnalysisDetails;
   selection_reason: string;
   confidence: number;
   evidence: Array<{ field: keyof ProjectInput; quote: string }>;
   questions: ProjectQuestionInput[];
   missing_information: string[];
+  facts: ProjectFact[];
+  question_chain: ProjectQuestionDetail[];
 };
 
 export type AgentAnalysisStreamEvent =

@@ -66,6 +66,98 @@ def valid_analysis_payload():
     }
 
 
+def rich_analysis_payload():
+    payload = valid_analysis_payload()
+    payload["project"].update(
+        {
+            "context": {
+                "project_type": "企业知识库 Agent",
+                "domain": "内部知识检索",
+                "stage": "上线后优化",
+            },
+            "ownership": {
+                "owned_modules": "检索链路与线上监控",
+                "contribution_boundary": "负责核心检索与工程化",
+            },
+            "architecture": {
+                "components": ["API", "Retriever", "Reranker"],
+                "data_flow": "query -> retrieve -> rerank -> answer",
+            },
+            "agent_details": {
+                "model": "Qwen2.5",
+                "tooling": ["向量检索", "重排"],
+            },
+            "tradeoffs": {
+                "chosen_approach": "混合检索 + 重排",
+                "alternatives": ["仅向量检索", "仅关键词检索"],
+            },
+            "engineering": {
+                "latency": "P95 低于 800ms",
+                "monitoring": "线上错误率监控",
+            },
+            "evaluation": {
+                "metrics": ["召回率", "响应延迟"],
+                "baseline": "原始向量检索",
+            },
+            "evolution": {
+                "v1": "单一向量检索",
+                "current": "混合检索 + 重排",
+            },
+        }
+    )
+    payload["facts"] = [
+        {
+            "fact_id": "fact-1",
+            "field": "ownership.owned_modules",
+            "value": "检索链路与线上监控",
+            "status": "extracted",
+            "source_type": "resume",
+            "evidence": [
+                {
+                    "quote": "负责检索链路和线上监控",
+                    "start_offset": 0,
+                    "end_offset": 14,
+                    "text_hash": "abc123",
+                }
+            ],
+            "confidence": 0.96,
+            "user_confirmed": False,
+        }
+    ]
+    payload["question_chain"] = [
+        {
+            "order": 1,
+            "question_group": "project",
+            "chain_id": "project-main",
+            "prompt": "你负责了哪些部分？",
+            "intent": "确认个人贡献",
+            "depends_on": None,
+            "source_fields": ["background_goal", "ownership.owned_modules"],
+            "source_fact_ids": ["fact-1"],
+            "expected_answer_points": [],
+            "followup_if_incomplete": "请先说明你的职责边界。",
+            "followup_if_conflicting": "请澄清你和团队的分工。",
+            "difficulty": "medium",
+        }
+    ]
+    return payload
+
+
+def test_analysis_response_accepts_rich_nested_project_payload():
+    result = AgentProjectAnalysisResponse.model_validate(rich_analysis_payload())
+
+    assert result.project.context["project_type"] == "企业知识库 Agent"
+    assert result.project.ownership["owned_modules"] == "检索链路与线上监控"
+    assert result.project.architecture["components"] == ["API", "Retriever", "Reranker"]
+    assert result.project.agent_details["model"] == "Qwen2.5"
+    assert result.project.tradeoffs["chosen_approach"] == "混合检索 + 重排"
+    assert result.project.engineering["latency"] == "P95 低于 800ms"
+    assert result.project.evaluation["baseline"] == "原始向量检索"
+    assert result.project.evolution["current"] == "混合检索 + 重排"
+    assert result.facts[0].status == "extracted"
+    assert result.question_chain[0].question_group == "project"
+
+
 def test_analysis_response_requires_exactly_three_questions():
     payload = valid_analysis_payload()
     payload["questions"] = payload["questions"][:2]
