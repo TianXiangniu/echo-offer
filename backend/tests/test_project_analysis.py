@@ -67,6 +67,25 @@ def valid_analysis_payload():
     }
 
 
+def test_build_user_prompt_covers_rich_project_analysis_contract():
+    prompt = project_analysis.build_user_prompt("负责检索链路和线上监控")
+
+    assert "project_name、background_goal、tech_stack、responsibilities、" in prompt
+    assert "ownership" in prompt
+    assert "boundary" in prompt or "职责边界" in prompt
+    assert "scale" in prompt or "规模" in prompt
+    assert "tradeoff" in prompt or "取舍" in prompt
+    assert "evaluation" in prompt or "评估" in prompt
+    assert "unknown" in prompt or "未知信息" in prompt
+    assert "fact" in prompt or "事实" in prompt
+    assert "status" in prompt or "状态" in prompt
+    assert "三道" in prompt or "three" in prompt
+    assert "依次" in prompt or "linked" in prompt or "chain" in prompt
+    assert "只使用已确认或已提取的字段" in prompt or "confirmed" in prompt
+    assert "token" in prompt or "空对象" in prompt or "omit irrelevant" in prompt
+    assert "【" not in prompt
+
+
 def rich_analysis_payload():
     payload = valid_analysis_payload()
     payload["project"].update(

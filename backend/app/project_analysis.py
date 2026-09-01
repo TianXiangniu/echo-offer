@@ -12,10 +12,33 @@ SYSTEM_PROMPT = """你是简历项目分析器。
 
 def build_user_prompt(resume_text: str) -> str:
     return f"""从下面完整简历中选择与 Agent/RAG/LLM 最相关且信息最完整的一个项目。
-返回 JSON：project 必须包含 project_name、background_goal、tech_stack、responsibilities、
-core_solution、engineering_challenges、failure_improvements、quantified_results 八个字段；
-evidence 必须是对象数组，每项包含 field 和 quote，quote 必须逐字来自简历；questions 必须恰好三道，依次覆盖职责背景、技术方案取舍、
-工程难点或效果验证；未知信息留空并列入 missing_information。
+只输出一个 JSON object，不要 Markdown，不要解释，不要额外项目。
+
+返回的 project 仍然必须保留八个核心字段：
+project_name、background_goal、tech_stack、responsibilities、
+core_solution、engineering_challenges、failure_improvements、quantified_results。
+在此基础上，尽量补充这些分组，但没有可靠信息时就返回空字符串或空对象：
+context、ownership、architecture、agent_details、tradeoffs、engineering、evaluation、evolution。
+
+请重点覆盖这些分析点：
+ownership 要写清楚职责边界，区分你亲自负责的部分和团队/共享部分；
+scale 要写清楚规模、流量、数据量、并发、延迟或影响范围；
+tradeoffs 要写清楚选型取舍、备选方案和放弃原因；
+evaluation 要写清楚验证方法、指标、基线、实验或线上验证方式；
+unknown 信息保持为空字符串或空对象，并写入 missing_information，不要猜测。
+
+facts 必须是对象数组，每条 fact 要有 fact_id、field、value、status、source_type、evidence、confidence、user_confirmed；
+status 只能使用 extracted、confirmed、inferred、missing、conflicting、rejected 之一；
+evidence 里的 quote 必须逐字来自简历，不能编造。
+
+questions 必须恰好三道，而且要形成一条依赖链：
+第 1 问先确认职责和背景；
+第 2 问基于第 1 问追问方案、边界或取舍；
+第 3 问基于前两问追问评估方法、结果或复现。
+question_chain 也必须给出三条，顺序链接，后一条的 depends_on 指向前一条。
+
+为了控制 token 输出，只填写与简历明确相关的类别；其余类别返回空对象或空字符串，不要扩写长段落。
+unknown 信息留空并列入 missing_information。
 
 简历：
 <resume>
