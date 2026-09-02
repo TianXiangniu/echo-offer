@@ -26,6 +26,10 @@ from .models import ModelSetting, User, utc_now
 from .schemas import ModelSettingsUpdate
 
 
+class ModelSettingsError(ValueError):
+    code = "invalid_settings"
+
+
 @dataclass(frozen=True, slots=True)
 class ModelSettingsValues:
     base_url: str
@@ -55,19 +59,19 @@ def default_model_settings() -> ModelSettingsValues:
 def validate_model_settings(settings: ModelSettingsValues) -> ModelSettingsValues:
     parsed_url = urlparse(settings.base_url.strip())
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-        raise ValueError("base_url 必须是完整的 HTTP 或 HTTPS 地址")
+        raise ModelSettingsError("base_url 必须是完整的 HTTP 或 HTTPS 地址")
     if not settings.model.strip():
-        raise ValueError("model 不能为空")
+        raise ModelSettingsError("model 不能为空")
     if not settings.assessment_model.strip():
-        raise ValueError("assessment_model 不能为空")
+        raise ModelSettingsError("assessment_model 不能为空")
     if not 0 <= settings.temperature <= 2:
-        raise ValueError("temperature 必须在 0 到 2 之间")
+        raise ModelSettingsError("temperature 必须在 0 到 2 之间")
     if not 256 <= settings.max_tokens <= 8192:
-        raise ValueError("max_tokens 必须在 256 到 8192 之间")
+        raise ModelSettingsError("max_tokens 必须在 256 到 8192 之间")
     if not 10 <= settings.timeout_seconds <= 300:
-        raise ValueError("timeout_seconds 必须在 10 到 300 之间")
+        raise ModelSettingsError("timeout_seconds 必须在 10 到 300 之间")
     if not 1 <= settings.assessment_batch_size <= 5:
-        raise ValueError("assessment_batch_size 必须在 1 到 5 之间")
+        raise ModelSettingsError("assessment_batch_size 必须在 1 到 5 之间")
     return ModelSettingsValues(
         base_url=parsed_url.geturl().rstrip("/"),
         model=settings.model.strip(),

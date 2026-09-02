@@ -7,24 +7,25 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .config import (
-    ASSESSMENT_TIMEOUT_SECONDS,
-    ANALYSIS_TIMEOUT_SECONDS,
     DEFAULT_DATABASE_URL,
     DEFAULT_UPLOAD_ROOT,
     MAX_RESUME_UPLOAD_BYTES,
-    SILICONFLOW_API_KEY,
-    SILICONFLOW_ASSESSMENT_MODEL,
-    SILICONFLOW_BASE_URL,
-    SILICONFLOW_MODEL,
     WORKFLOW_VERSION,
 )
 from .database import create_database, get_db
+from .model_settings import (
+    ModelSettingsError,
+    load_model_settings,
+    public_model_settings,
+    save_model_settings,
+)
 from .providers import (
     AssessmentProvider,
     SiliconFlowAssessmentProvider,
     ProjectAnalysisProvider,
     ProjectAnalysisProviderError,
     SiliconFlowProjectAnalysisProvider,
+    probe_model_connection,
 )
 from .resume_files import ResumeUploadError, read_upload_bytes
 from .resume_parsers import ResumeParserError
@@ -44,6 +45,9 @@ from .schemas import (
     InterviewHistoryItem,
     LearningRecommendationResponse,
     OperationJobResponse,
+    ModelConnectionTestResponse,
+    ModelSettingsResponse,
+    ModelSettingsUpdate,
     SessionCreate,
     SessionCreateResponse,
     SessionView,
@@ -72,6 +76,27 @@ from .services import (
 )
 
 
+def build_model_providers(settings):
+    return (
+        SiliconFlowAssessmentProvider(
+            api_key=settings.api_key,
+            model=settings.assessment_model,
+            base_url=settings.base_url,
+            timeout_seconds=settings.timeout_seconds,
+            temperature=settings.temperature,
+            max_tokens=settings.max_tokens,
+        ),
+        SiliconFlowProjectAnalysisProvider(
+            api_key=settings.api_key,
+            model=settings.model,
+            base_url=settings.base_url,
+            timeout_seconds=settings.timeout_seconds,
+            temperature=settings.temperature,
+            max_tokens=settings.max_tokens,
+        ),
+    )
+
+
 def create_app(
     database_url: str | None = None,
     upload_root: Path | None = None,
@@ -83,18 +108,17 @@ def create_app(
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.upload_root = upload_root or DEFAULT_UPLOAD_ROOT
-    app.state.assessment_provider = assessment_provider or SiliconFlowAssessmentProvider(
-        api_key=SILICONFLOW_API_KEY,
-        model=SILICONFLOW_ASSESSMENT_MODEL,
-        base_url=SILICONFLOW_BASE_URL,
-        timeout_seconds=ASSESSMENT_TIMEOUT_SECONDS,
-    )
-    app.state.project_analysis_provider = project_analysis_provider or SiliconFlowProjectAnalysisProvider(
-        api_key=SILICONFLOW_API_KEY,
-        model=SILICONFLOW_MODEL,
-        base_url=SILICONFLOW_BASE_URL,
-        timeout_seconds=ANALYSIS_TIMEOUT_SECONDS,
-    )
+    with session_factory() as settings_db:
+        app.state.model_settings = load_model_settings(settings_db)
+    if assessment_provider is None or project_analysis_provider is None:
+        default_assessment, default_project = build_model_providers(
+            app.state.model_settings
+        )
+        app.state.assessment_provider = assessment_provider or default_assessment
+        app.state.project_analysis_provider = project_analysis_provider or default_project
+    else:
+        app.state.assessment_provider = assessment_provider
+        app.state.project_analysis_provider = project_analysis_provider
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:3000"],
@@ -166,6 +190,13 @@ def create_app(
             content={"detail": str(exc), "code": exc.code},
         )
 
+    @app.exception_handler(ModelSettingsError)
+    async def handle_model_settings_error(_, exc: ModelSettingsError):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": str(exc), "code": exc.code},
+        )
+
     @app.get("/health")
     def health():
         try:
@@ -179,6 +210,34 @@ def create_app(
             "workflow_version": WORKFLOW_VERSION,
             "database": database_status,
         }
+
+    @app.get("/api/settings/model", response_model=ModelSettingsResponse)
+    def model_settings(db: Session = Depends(get_db)):
+        settings = load_model_settings(db)
+        app.state.model_settings = settings
+        return public_model_settings(settings)
+
+    @app.put("/api/settings/model", response_model=ModelSettingsResponse)
+    def update_model_settings(
+        payload: ModelSettingsUpdate,
+        db: Session = Depends(get_db),
+    ):
+        settings = save_model_settings(db, payload)
+        next_assessment, next_project = build_model_providers(settings)
+        db.commit()
+        app.state.model_settings = settings
+        app.state.assessment_provider = next_assessment
+        app.state.project_analysis_provider = next_project
+        return public_model_settings(settings)
+
+    @app.post(
+        "/api/settings/model/test",
+        response_model=ModelConnectionTestResponse,
+    )
+    def test_model_settings(db: Session = Depends(get_db)):
+        settings = load_model_settings(db)
+        app.state.model_settings = settings
+        return probe_model_connection(settings)
 
     @app.post("/api/profile", response_model=ProfileResponse)
     def profile(payload: ProfileCreate, db: Session = Depends(get_db)):

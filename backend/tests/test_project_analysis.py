@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.models import Resume, ResumeProject, ResumeProjectAnalysis, ResumeProjectQuestion
+from app.config import MODEL_MAX_TOKENS
 import app.project_analysis as project_analysis
 from app.project_analysis import clean_model_json, parse_model_analysis, validate_analysis_evidence
 from app.providers import ProjectAnalysisProviderError, SiliconFlowProjectAnalysisProvider
@@ -417,7 +418,7 @@ def test_siliconflow_provider_uses_timeout_safe_generation_options():
     provider.analyze("简历文本")
 
     payload = json.loads(requests[0].content)
-    assert payload["max_tokens"] == 2400
+    assert payload["max_tokens"] == MODEL_MAX_TOKENS
     assert payload["thinking_budget"] == 256
     assert payload["reasoning_effort"] == "high"
     assert payload["response_format"] == {"type": "json_object"}
