@@ -11,8 +11,8 @@ export const homeCopy = {
   eyebrow: "Echo Offer · Agent 面试准备",
   projectTitle: "把你做过的项目，讲清楚。",
   projectDescription: "上传一份简历，我们先挑出一个项目；你确认内容后，再按真实面试的方式练一遍。",
-  uploadTitle: "先把简历放进来",
-  uploadHint: "支持 PDF 和 DOCX，解析后可以继续修改。",
+  uploadTitle: "上传你的简历",
+  uploadHint: "支持 PDF 和 DOCX，上传后可以检查文字。",
   projectSection: "确认一个项目",
   projectFields: {
     project_name: "项目名称",

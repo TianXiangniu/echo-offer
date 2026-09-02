@@ -199,14 +199,14 @@ export default function HomePage() {
             <div className="mint-section-heading">
               <div className="mint-section-heading-main">
                 <span className="mint-section-index">01</span>
-                <div><p className="mint-section-eyebrow">先做这一步</p><h2 id="resume-heading" className="mint-section-title">{homeCopy.uploadTitle}</h2></div>
+                <div><p className="mint-section-eyebrow">简历文件</p><h2 id="resume-heading" className="mint-section-title">{homeCopy.uploadTitle}</h2></div>
               </div>
               <span className="mint-section-aside">PDF / DOCX</span>
             </div>
             <div className="mint-card mint-upload-card">
               <span className="mint-upload-icon" aria-hidden="true">↗</span>
               <div className="mint-upload-main">
-                <p className="mint-upload-title">把简历放进来</p>
+                <p className="mint-upload-title">选择简历文件</p>
                 <p className="mint-upload-hint">{homeCopy.uploadHint} 扫描件暂不支持。</p>
                 {resumeSource && !uploading && (
                   <p className="mint-file-status">
@@ -226,11 +226,11 @@ export default function HomePage() {
 
           <section className="mint-section" aria-labelledby="resume-text-heading">
             <div className="mint-section-heading">
-              <div className="mint-section-heading-main"><span className="mint-section-index">02</span><div><p className="mint-section-eyebrow">随时可以修改</p><h2 id="resume-text-heading" className="mint-section-title">简历内容</h2></div></div>
+              <div className="mint-section-heading-main"><span className="mint-section-index">02</span><div><p className="mint-section-eyebrow">简历文字</p><h2 id="resume-text-heading" className="mint-section-title">检查简历内容</h2></div></div>
             </div>
             <div className="mint-card mint-edit-card">
-              <p className="mint-edit-intro">解析后的文字会放在这里。你也可以直接粘贴或修改，内容只用来帮助整理项目。</p>
-              <textarea required value={resumeText} onChange={(event) => handleResumeTextChange(event.target.value)} disabled={analyzing || uploading || busy} placeholder="粘贴你的简历内容……" className="mint-textarea" aria-label="简历内容" />
+              <p className="mint-edit-intro">这里显示从文件中读出的文字，你可以直接修改，也可以重新粘贴。</p>
+              <textarea required value={resumeText} onChange={(event) => handleResumeTextChange(event.target.value)} disabled={analyzing || uploading || busy} placeholder="粘贴或修改你的简历文字……" className="mint-textarea" aria-label="简历内容" />
             </div>
           </section>
 

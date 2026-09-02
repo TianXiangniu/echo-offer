@@ -17,7 +17,7 @@ for (const [name, source] of [["home", homePage], ["interview", interviewPage], 
   }
 }
 
-for (const token of ["把你做过的项目，", "先把简历放进来", "按真实面试的方式练一遍"]) {
+for (const token of ["把你做过的项目，", "上传你的简历", "按真实面试的方式练一遍"]) {
   if (!copy.includes(token)) throw new Error(`copy is missing natural home text: ${token}`);
 }
 
