@@ -38,6 +38,12 @@ Copy-Item backend/.env.example backend/.env
 
 `backend/.env` 已被 Git 忽略，不能提交到仓库。不要把 API Key 写入前端、日志或 Git；如果密钥曾经暴露，应在硅基流动后台撤销并重新生成。
 
+### 模型设置控制台
+
+启动前后端后，打开 `http://localhost:3000/console` 可以在网页中查看和修改服务地址、项目整理模型、面试评分模型、温度、最大输出长度、请求超时时间和每批评分题目数量。
+
+填写 API Key 后点击“保存并应用”，设置会保存在本机的 SQLite 数据库中，并立即用于后续请求。读取设置时只显示“是否已配置”，不会返回 API Key；API Key 输入框留空保存会保留原值。修改设置后可点击“测试连接”确认当前已保存的服务是否可用。若模型回答达到长度上限，优先适当提高“最大输出长度”。
+
 上传文件保存在 `data/uploads/`，该目录已加入 Git 忽略规则。扫描型 PDF、图片简历和只有图片的 DOCX 暂不支持 OCR，请改用文本粘贴或手动录入。
 
 ## 本地运行
@@ -81,10 +87,24 @@ $env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8010"
 
 回答过程中不会触发 AI 评分；最后一题提交后，一场面试只发起一次批量评估请求。页面会显示收集回答、请求模型、校验证据、生成报告四个阶段。模型超时或网络失败时，回答不会丢失，可以在完成页或报告页重新生成评估，重试不会增加回答记录。当前阶段暂不包含证据语义相关性验证、技术事实核验、追问器和 AI 评分 SSE。
 
-## Git 日常更新
+## 面试历史与用户画像
+
+每次开始面试都会创建新的面试记录。题目、回答、AI 评分、评分重试和报告版本都保存在 `data/app.db`，不会覆盖之前的面试。服务重启后仍可以通过历史接口读取过去的面试。
+
+批量评分完成且结果有效后，系统会按技能汇总最近的面试结果，更新当前求职方向的用户画像，并生成学习建议。单场评分不读取历史画像；长期趋势分析只使用已经保存的结构化评分。
+
+每次整场评分都会记录一个独立的 `assessment_batch` 和 `operation_job`。评分阶段、完成或失败信息会写入 `operation_job_events`，因此可以通过 `GET /api/jobs/{job_id}` 查看本次分析过程和错误原因。面试历史使用 `GET /api/interviews/history`，画像摘要使用 `GET /api/profiles/{profile_id}/summary`，画像快照使用 `GET /api/profiles/{profile_id}/history`。
+
+数据库结构通过 Alembic 管理。需要手动执行迁移时，在项目根目录运行：
 
 ```powershell
-git add .
-git commit -m "描述本次修改"
-git push
+Set-Location backend
+python -m alembic -c alembic.ini upgrade head
+Set-Location ..
 ```
+
+本地数据库备份可以调用 `backend/app/backup.py` 中的 `backup_database`，备份文件保存到 `data/backups/`，使用 SQLite Online Backup API，包含 WAL 中尚未合并的数据，不会自动删除旧备份。
+
+## Git 日常更新
+
+本阶段只保留本地代码和本地提交，不会自动同步到 GitHub。确认需要提交本地版本时，再按文件范围执行 `git add` 和 `git commit`；推送命令由你明确决定后再执行。

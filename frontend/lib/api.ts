@@ -203,9 +203,45 @@ export type AssessmentBatchItem = {
 export type AssessmentBatchResponse = {
   status: "pending" | "valid" | "invalid" | "rejected" | string;
   batch_id: string | null;
+  job_id?: string | null;
+  job_status?: string | null;
+  job_error_code?: string | null;
+  job_error_message?: string | null;
   evaluated_count: number;
   total_count: number;
   assessments: AssessmentBatchItem[];
+};
+
+export type ModelSettingsResponse = {
+  base_url: string;
+  model: string;
+  assessment_model: string;
+  temperature: number;
+  max_tokens: number;
+  timeout_seconds: number;
+  assessment_batch_size: number;
+  api_key_configured: boolean;
+  updated_at: string | null;
+};
+
+export type ModelSettingsUpdate = {
+  base_url: string;
+  model: string;
+  assessment_model: string;
+  api_key?: string;
+  clear_api_key: boolean;
+  temperature: number;
+  max_tokens: number;
+  timeout_seconds: number;
+  assessment_batch_size: number;
+};
+
+export type ModelConnectionTestResponse = {
+  ok: boolean;
+  message: string;
+  model: string;
+  latency_ms: number;
+  error_code?: string | null;
 };
 
 export class ApiError extends Error {
@@ -415,4 +451,33 @@ export type Report = {
 
 export function getReport(sessionId: string) {
   return request<Report>(`/api/sessions/${sessionId}/report`);
+}
+
+export function getModelSettings() {
+  return request<ModelSettingsResponse>("/api/settings/model");
+}
+
+export function updateModelSettings(input: ModelSettingsUpdate) {
+  const body: Record<string, string | number | boolean> = {
+    base_url: input.base_url,
+    model: input.model,
+    assessment_model: input.assessment_model,
+    clear_api_key: input.clear_api_key,
+    temperature: input.temperature,
+    max_tokens: input.max_tokens,
+    timeout_seconds: input.timeout_seconds,
+    assessment_batch_size: input.assessment_batch_size,
+  };
+  if (input.api_key?.trim()) body.api_key = input.api_key.trim();
+  return request<ModelSettingsResponse>("/api/settings/model", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export function testModelConnection() {
+  return request<ModelConnectionTestResponse>("/api/settings/model/test", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 }

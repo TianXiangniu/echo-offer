@@ -10,7 +10,9 @@
     "test:ui": "node --experimental-strip-types lib/modern-ui.test.ts",
     "test:supplement": "node --experimental-strip-types lib/project-supplement.test.ts",
     "test:interview-typography": "node --experimental-strip-types lib/interview-typography.test.ts",
-    "test": "npm run test:copy && npm run test:ui && npm run test:supplement && npm run test:interview-typography"
+    "test:assessment-types": "node --experimental-strip-types lib/assessment-types.test.ts",
+    "test:model-console": "node --experimental-strip-types lib/model-console.test.ts",
+    "test": "npm run test:copy && npm run test:ui && npm run test:supplement && npm run test:interview-typography && npm run test:assessment-types && npm run test:model-console"
   },
   "dependencies": {
     "next": "^15.4.0",
