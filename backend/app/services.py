@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import AsyncIterator
+from datetime import timezone
 from pathlib import Path
 from dataclasses import asdict
 from uuid import uuid4
@@ -10,6 +11,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .config import (
+    ASSESSMENT_CASE_BATCH_SIZE,
+    ASSESSMENT_JOB_LEASE_SECONDS,
     LOCAL_USER_ID,
     MAX_ANALYSIS_RESUME_CHARS,
     SILICONFLOW_MODEL,
@@ -177,6 +180,39 @@ def _create_batch_job(
         )
         .order_by(OperationJob.created_at.desc(), OperationJob.id.desc())
     )
+    if active_job is not None:
+        reference_time = active_job.started_at or active_job.created_at
+        if reference_time is not None:
+            if reference_time.tzinfo is None:
+                reference_time = reference_time.replace(tzinfo=timezone.utc)
+            age_seconds = (utc_now() - reference_time).total_seconds()
+            if age_seconds > ASSESSMENT_JOB_LEASE_SECONDS:
+                stale_batch = (
+                    db.get(AssessmentBatch, active_job.assessment_batch_id)
+                    if active_job.assessment_batch_id
+                    else None
+                )
+                active_job.status = "failed"
+                active_job.current_stage = "failed"
+                active_job.error_code = "stale_job"
+                active_job.error_message = "上一轮评分任务已超时，已允许重新生成"
+                active_job.finished_at = utc_now()
+                if stale_batch is not None and stale_batch.status in {"pending", "running"}:
+                    stale_batch.status = "failed"
+                    stale_batch.error_code = "stale_job"
+                    stale_batch.error_message = active_job.error_message
+                    stale_batch.finished_at = utc_now()
+                    for stale_run in db.scalars(
+                        select(AssessmentRun).where(
+                            AssessmentRun.assessment_batch_id == stale_batch.id,
+                            AssessmentRun.status == "pending",
+                        )
+                    ):
+                        stale_run.error_code = "stale_job"
+                        stale_run.error_reason = active_job.error_message
+                _append_job_event(db, active_job, "error", active_job.progress, active_job.error_message)
+                db.commit()
+                active_job = None
     if active_job is not None:
         return active_job
     previous_attempt = db.scalar(
@@ -792,6 +828,14 @@ def _batch_result_response(
     }
 
 
+def _split_assessment_cases(
+    cases: list[BatchAssessmentCase],
+    batch_size: int,
+) -> list[tuple[BatchAssessmentCase, ...]]:
+    size = max(1, batch_size)
+    return [tuple(cases[index : index + size]) for index in range(0, len(cases), size)]
+
+
 def assess_session(
     db: Session,
     session_id: str,
@@ -865,6 +909,11 @@ def assess_session(
         return _batch_result_response(db, answers, len(questions), None)
 
     question_by_id = {question.id: question for question in questions}
+    answers_to_evaluate = [
+        answer
+        for answer in scored_answers
+        if existing_runs[answer.id] is None or existing_runs[answer.id].status != "valid"
+    ]
     evaluator = getattr(assessment_provider, "evaluator", "siliconflow-blind-rubric-v1")
     batch_id = str(uuid4())
     job = _create_batch_job(db, session, scored_answers)
@@ -895,7 +944,7 @@ def assess_session(
     db.commit()
 
     runs_by_answer: dict[str, AssessmentRun] = {}
-    for answer in scored_answers:
+    for answer in answers_to_evaluate:
         question = question_by_id[answer.question_id]
         rubric = build_rubric(_question_spec(question))
         run = AssessmentRun(
@@ -916,7 +965,7 @@ def assess_session(
     db.commit()
 
     cases: list[BatchAssessmentCase] = []
-    for answer in scored_answers:
+    for answer in answers_to_evaluate:
         question = question_by_id[answer.question_id]
         question_spec = _question_spec(question)
         if answer.status == "explicit_unknown":
@@ -941,64 +990,122 @@ def assess_session(
             )
     db.commit()
 
-    try:
-        results = assessment_provider.assess_batch(tuple(cases)) if cases else ()
-        expected_keys = {(case.answer_id, case.question_id) for case in cases}
-        actual_keys = {(item.answer_id, item.question_id) for item in results}
-        if actual_keys != expected_keys or len(results) != len(actual_keys):
-            raise AssessmentResponseError("invalid_batch_case", "批量评分结果与回答不匹配")
-        for item in results:
-            run = runs_by_answer[item.answer_id]
-            _persist_rubric_result(db, run, item.result)
-            if item.result.rubric_items and all(
-                observation.validity == "valid" for observation in item.result.rubric_items
-            ):
-                run.status = "valid"
-                run.aggregate_level = item.result.level
-                run.aggregate_confidence = item.result.confidence
-            else:
-                run.status = "invalid"
-                run.error_code = "invalid_evidence"
-                run.error_reason = "至少一个 Rubric 证据未通过完整性校验"
-        batch_status = _batch_status(list(runs_by_answer.values()))
-        persist_interview_report(
-            db,
-            session_id,
-            assessment_batch_id=batch_id,
-            status="ready" if batch_status == "valid" else "partial",
-            commit=False,
-        )
-        if batch_status == "valid":
-            update_candidate_profile(db, session_id, commit=False)
-        batch.status = "valid" if batch_status == "valid" else "partial"
-        batch.finished_at = utc_now()
-        if batch_status != "valid":
-            batch.error_code = "invalid_evidence"
-            batch.error_message = "部分回答的证据未通过校验，已保存可用结果"
-        job.status = "succeeded" if batch_status == "valid" else "partial"
-        job.progress = 100
-        job.current_stage = "completed"
-        job.finished_at = utc_now()
-        job.error_code = batch.error_code
-        job.error_message = batch.error_message
-        job.raw_response_json = json.dumps(
-            {"case_count": len(cases), "result_count": len(results)},
-            ensure_ascii=False,
-        )
-        _append_job_event(
-            db,
-            job,
-            "completed",
-            100,
-            "本场分析完成" if batch_status == "valid" else "本场分析完成，但部分回答未通过校验",
-        )
-        db.commit()
-    except AssessmentProviderError as exc:
-        _mark_batch_failed(db, job.id, batch.id, exc.code, str(exc), rejected=False)
-    except AssessmentResponseError as exc:
-        _mark_batch_failed(db, job.id, batch.id, exc.code, str(exc), rejected=True)
-    except Exception as exc:
-        _mark_batch_failed(db, job.id, batch.id, "system_error", str(exc), rejected=False)
+    chunks = _split_assessment_cases(cases, ASSESSMENT_CASE_BATCH_SIZE)
+    failed_chunks: list[tuple[str, str]] = []
+    successful_case_count = sum(
+        1 for answer in scored_answers if answer.status == "explicit_unknown"
+    )
+
+    for chunk_index, chunk in enumerate(chunks, start=1):
+        try:
+            results = assessment_provider.assess_batch(chunk)
+            expected_keys = {(case.answer_id, case.question_id) for case in chunk}
+            actual_keys = {(item.answer_id, item.question_id) for item in results}
+            if actual_keys != expected_keys or len(results) != len(actual_keys):
+                raise AssessmentResponseError("invalid_batch_case", "批量评分结果与回答不匹配")
+            for item in results:
+                run = runs_by_answer[item.answer_id]
+                _persist_rubric_result(db, run, item.result)
+                if item.result.rubric_items and all(
+                    observation.validity == "valid" for observation in item.result.rubric_items
+                ):
+                    run.status = "valid"
+                    run.aggregate_level = item.result.level
+                    run.aggregate_confidence = item.result.confidence
+                else:
+                    run.status = "invalid"
+                    run.error_code = "invalid_evidence"
+                    run.error_reason = "至少一个 Rubric 证据未通过完整性校验"
+            successful_case_count += len(chunk)
+            db.commit()
+            progress = 20 + int(70 * chunk_index / max(1, len(chunks)))
+            job.progress = progress
+            _append_job_event(db, job, "stage", progress, f"已完成 {chunk_index}/{len(chunks)} 批回答")
+            db.commit()
+        except AssessmentProviderError as exc:
+            db.rollback()
+            for case in chunk:
+                run = runs_by_answer[case.answer_id]
+                run.status = "pending"
+                run.error_code = exc.code
+                run.error_reason = str(exc)[:500]
+            failed_chunks.append((exc.code, str(exc)))
+            db.commit()
+        except AssessmentResponseError as exc:
+            db.rollback()
+            for case in chunk:
+                run = runs_by_answer[case.answer_id]
+                run.status = "rejected"
+                run.error_code = exc.code
+                run.error_reason = str(exc)[:500]
+            failed_chunks.append((exc.code, str(exc)))
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            for case in chunk:
+                run = runs_by_answer[case.answer_id]
+                run.status = "pending"
+                run.error_code = "system_error"
+                run.error_reason = str(exc)[:500]
+            failed_chunks.append(("system_error", str(exc)))
+            db.commit()
+
+    latest_runs_for_session = [
+        runs_by_answer.get(answer.id) or existing_runs[answer.id]
+        for answer in scored_answers
+        if runs_by_answer.get(answer.id) is not None or existing_runs[answer.id] is not None
+    ]
+    batch_status = _batch_status(latest_runs_for_session)
+    first_failure = failed_chunks[0] if failed_chunks else None
+    has_previous_valid_result = any(
+        run is not None and run.status == "valid" for run in existing_runs.values()
+    )
+    if successful_case_count or has_previous_valid_result:
+        try:
+            persist_interview_report(
+                db,
+                session_id,
+                assessment_batch_id=batch_id,
+                status="ready" if batch_status == "valid" else "partial",
+                commit=False,
+            )
+            if batch_status == "valid":
+                update_candidate_profile(db, session_id, commit=False)
+            batch.status = "valid" if batch_status == "valid" else "partial"
+            batch.finished_at = utc_now()
+            if first_failure:
+                batch.error_code, batch.error_message = first_failure[0], first_failure[1][:500]
+            elif batch_status != "valid":
+                batch.error_code = "invalid_evidence"
+                batch.error_message = "部分回答的证据未通过校验，已保存可用结果"
+            job.status = "succeeded" if batch_status == "valid" else "partial"
+            job.progress = 100
+            job.current_stage = "completed"
+            job.finished_at = utc_now()
+            job.error_code = batch.error_code
+            job.error_message = batch.error_message
+            job.raw_response_json = json.dumps(
+                {
+                    "case_count": len(cases),
+                    "successful_case_count": successful_case_count,
+                    "successful_chunk_count": len(chunks) - len(failed_chunks),
+                    "failed_chunk_count": len(failed_chunks),
+                },
+                ensure_ascii=False,
+            )
+            _append_job_event(
+                db,
+                job,
+                "completed",
+                100,
+                "本场分析完成" if batch_status == "valid" else "本场分析完成，但部分回答未通过校验",
+            )
+            db.commit()
+        except Exception as exc:
+            _mark_batch_failed(db, job.id, batch.id, "system_error", str(exc), rejected=False)
+    else:
+        error_code, error_message = first_failure or ("system_error", "没有获得可用的评分结果")
+        _mark_batch_failed(db, job.id, batch.id, error_code, error_message, rejected=False)
 
     return _batch_result_response(db, answers, len(questions), batch_id)
 
@@ -1280,14 +1387,19 @@ def _build_report_payload(
         .where(AssessmentRun.answer_id.in_(answer_ids))
         .order_by(AssessmentRun.attempt_number, AssessmentRun.created_at)
     ) if answer_ids else None
-    if run_query is not None and assessment_batch_id:
-        run_query = run_query.where(
-            AssessmentRun.assessment_batch_id == assessment_batch_id
-        )
-    runs = list(db.scalars(run_query)) if run_query is not None else []
-    latest_runs: dict[str, AssessmentRun] = {}
-    for run in runs:
-        latest_runs[run.answer_id] = run
+    all_runs = list(db.scalars(run_query)) if run_query is not None else []
+    latest_all_runs: dict[str, AssessmentRun] = {}
+    for run in all_runs:
+        latest_all_runs[run.answer_id] = run
+    if assessment_batch_id:
+        latest_runs: dict[str, AssessmentRun] = {}
+        for run in all_runs:
+            if run.assessment_batch_id == assessment_batch_id:
+                latest_runs[run.answer_id] = run
+        for answer_id, run in latest_all_runs.items():
+            latest_runs.setdefault(answer_id, run)
+    else:
+        latest_runs = latest_all_runs
 
     status_counts = {status: 0 for status in ("pending", "valid", "invalid", "rejected")}
     for run in latest_runs.values():
@@ -1476,9 +1588,9 @@ def get_report(db: Session, session_id: str) -> dict:
 def list_interview_history(db: Session) -> list[dict]:
     sessions = list(
         db.scalars(
-            select(InterviewSession).order_by(
-                InterviewSession.created_at.desc(), InterviewSession.id.desc()
-            )
+            select(InterviewSession)
+            .where(InterviewSession.archived_at.is_(None))
+            .order_by(InterviewSession.created_at.desc(), InterviewSession.id.desc())
         )
     )
     history = []
@@ -1504,16 +1616,21 @@ def list_interview_history(db: Session) -> list[dict]:
             .order_by(OperationJob.created_at.desc(), OperationJob.id.desc())
         )
         target = db.get(InterviewTarget, session.target_id)
+        project = db.get(ResumeProject, session.resume_project_id)
+        report_payload = json.loads(report.report_json) if report else None
         history.append(
             {
                 "session_id": session.id,
                 "status": session.status,
+                "project_name": project.project_name if project else None,
                 "direction": target.direction if target else None,
                 "target_title": target.target_title if target else None,
                 "completed": answered_count,
                 "total": question_count,
                 "report_status": report.status if report else None,
                 "analysis_status": job.status if job else None,
+                "strength_count": len(report_payload["strengths"]) if report_payload else None,
+                "gap_count": len(report_payload["gaps"]) if report_payload else None,
                 "created_at": session.created_at,
                 "updated_at": session.updated_at,
             }

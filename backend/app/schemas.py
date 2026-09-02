@@ -323,12 +323,15 @@ class ReportResponse(BaseModel):
 class InterviewHistoryItem(BaseModel):
     session_id: str
     status: str
+    project_name: str | None = None
     direction: str | None = None
     target_title: str | None = None
     completed: int
     total: int
     report_status: str | None = None
     analysis_status: str | None = None
+    strength_count: int | None = None
+    gap_count: int | None = None
     created_at: datetime
     updated_at: datetime
 
