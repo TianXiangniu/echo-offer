@@ -677,10 +677,15 @@ def _question_response(question: InterviewQuestion) -> dict:
     }
 
 
-def get_session_view(db: Session, session_id: str) -> dict:
+def _get_active_session(db: Session, session_id: str) -> InterviewSession:
     session = db.get(InterviewSession, session_id)
-    if session is None:
+    if session is None or session.archived_at is not None:
         raise NotFoundError("session not found")
+    return session
+
+
+def get_session_view(db: Session, session_id: str) -> dict:
+    session = _get_active_session(db, session_id)
     questions = list(
         db.scalars(
             select(InterviewQuestion)
@@ -716,9 +721,7 @@ def submit_answer(
     session_id: str,
     payload: AnswerSubmission,
 ) -> dict:
-    session = db.get(InterviewSession, session_id)
-    if session is None:
-        raise NotFoundError("session not found")
+    session = _get_active_session(db, session_id)
     question = db.scalar(
         select(InterviewQuestion).where(
             InterviewQuestion.id == payload.question_id,
@@ -842,9 +845,7 @@ def assess_session(
     assessment_provider: AssessmentProvider,
 ) -> dict:
     """Evaluate all completed answers with one provider call."""
-    session = db.get(InterviewSession, session_id)
-    if session is None:
-        raise NotFoundError("session not found")
+    session = _get_active_session(db, session_id)
     questions = list(
         db.scalars(
             select(InterviewQuestion)
@@ -1579,10 +1580,16 @@ def get_persisted_report(db: Session, session_id: str) -> dict | None:
 
 
 def get_report(db: Session, session_id: str) -> dict:
-    session = db.get(InterviewSession, session_id)
-    if session is None:
-        raise NotFoundError("session not found")
+    _get_active_session(db, session_id)
     return get_persisted_report(db, session_id) or _build_report_payload(db, session_id)
+
+
+def archive_interview(db: Session, session_id: str) -> None:
+    session = db.get(InterviewSession, session_id)
+    if session is None or session.archived_at is not None:
+        raise NotFoundError("session not found")
+    session.archived_at = utc_now()
+    db.commit()
 
 
 def list_interview_history(db: Session) -> list[dict]:

@@ -1,8 +1,8 @@
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.models import InterviewSession, utc_now
+from app.models import AnswerAttempt, InterviewSession, utc_now
 
 
 def create_history_session(client):
@@ -86,3 +86,48 @@ def test_history_is_ordered_by_newest_session(ai_client):
     rows = ai_client.get("/api/interviews/history").json()
     returned_ids = [row["session_id"] for row in rows]
     assert returned_ids.index(newer_id) < returned_ids.index(older_id)
+
+
+def test_delete_hides_session_but_preserves_answers(ai_client):
+    session_id, questions = create_history_session(ai_client)
+    answer = ai_client.post(
+        f"/api/sessions/{session_id}/answers",
+        json={
+            "question_id": questions[0]["id"],
+            "client_submission_id": "archive-answer",
+            "status": "submitted",
+            "answer_text": "我负责了检索链路。",
+        },
+    )
+    assert answer.status_code == 200
+
+    response = ai_client.delete(f"/api/sessions/{session_id}")
+
+    assert response.status_code == 204
+    assert all(row["session_id"] != session_id for row in ai_client.get("/api/interviews/history").json())
+    assert ai_client.get(f"/api/sessions/{session_id}").status_code == 404
+    assert ai_client.delete(f"/api/sessions/{session_id}").status_code == 404
+
+    with ai_client.app.state.session_factory() as db:
+        session = db.get(InterviewSession, session_id)
+        assert session.archived_at is not None
+        assert db.scalar(
+            select(func.count(AnswerAttempt.id)).where(AnswerAttempt.session_id == session_id)
+        ) == 1
+
+
+def test_archived_session_cannot_be_read_or_changed(ai_client):
+    session_id, questions = create_history_session(ai_client)
+    assert ai_client.delete(f"/api/sessions/{session_id}").status_code == 204
+
+    assert ai_client.get(f"/api/sessions/{session_id}/report").status_code == 404
+    assert ai_client.post(
+        f"/api/sessions/{session_id}/answers",
+        json={
+            "question_id": questions[0]["id"],
+            "client_submission_id": "archived-answer",
+            "status": "submitted",
+            "answer_text": "不能继续修改。",
+        },
+    ).status_code == 404
+    assert ai_client.post(f"/api/sessions/{session_id}/assessment").status_code == 404

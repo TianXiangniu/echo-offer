@@ -60,6 +60,7 @@ from .services import (
     ResumeOwnerConflictError,
     ProjectAnalysisError,
     analyze_resume_project,
+    archive_interview,
     assess_session,
     create_profile,
     create_session,
@@ -320,6 +321,11 @@ def create_app(
     @app.get("/api/sessions/{session_id}", response_model=SessionView)
     def session_view(session_id: str, db: Session = Depends(get_db)):
         return get_session_view(db, session_id)
+
+    @app.delete("/api/sessions/{session_id}", status_code=204)
+    def delete_session(session_id: str, db: Session = Depends(get_db)):
+        archive_interview(db, session_id)
+        return None
 
     @app.post("/api/sessions/{session_id}/answers", response_model=AnswerResponse)
     def answer(
