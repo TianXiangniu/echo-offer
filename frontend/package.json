@@ -9,7 +9,8 @@
     "test:copy": "node --experimental-strip-types lib/ui-copy.test.ts",
     "test:ui": "node --experimental-strip-types lib/modern-ui.test.ts",
     "test:supplement": "node --experimental-strip-types lib/project-supplement.test.ts",
-    "test": "npm run test:copy && npm run test:ui && npm run test:supplement"
+    "test:interview-typography": "node --experimental-strip-types lib/interview-typography.test.ts",
+    "test": "npm run test:copy && npm run test:ui && npm run test:supplement && npm run test:interview-typography"
   },
   "dependencies": {
     "next": "^15.4.0",
