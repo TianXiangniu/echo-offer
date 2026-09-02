@@ -155,6 +155,22 @@ export type SessionView = {
   progress: { completed: number; total: number };
 };
 
+export type InterviewHistoryItem = {
+  session_id: string;
+  status: string;
+  project_name: string | null;
+  direction: string | null;
+  target_title: string | null;
+  completed: number;
+  total: number;
+  report_status: string | null;
+  analysis_status: string | null;
+  strength_count: number | null;
+  gap_count: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AnswerInput = {
   question_id: string;
   client_submission_id: string;
@@ -451,6 +467,14 @@ export type Report = {
 
 export function getReport(sessionId: string) {
   return request<Report>(`/api/sessions/${sessionId}/report`);
+}
+
+export function getInterviewHistory() {
+  return request<InterviewHistoryItem[]>("/api/interviews/history");
+}
+
+export function deleteInterview(sessionId: string) {
+  return request<void>(`/api/sessions/${sessionId}`, { method: "DELETE" });
 }
 
 export function getModelSettings() {
