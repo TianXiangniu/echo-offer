@@ -105,6 +105,7 @@ export default function InterviewHistoryPage() {
           <nav className="mint-nav" aria-label="页面导航">
             <a className="mint-nav-link" href="/">返回准备</a>
             <span className="mint-nav-current">面试记录</span>
+            <a className="mint-nav-link" href="/profile">能力概况</a>
             <a className="mint-nav-link" href="/console">模型设置</a>
           </nav>
         </header>
@@ -166,6 +167,7 @@ export default function InterviewHistoryPage() {
                     </div>
                     <div className="mint-history-actions">
                       <a className="mint-button mint-button--primary" href={state.href}>{state.actionLabel}</a>
+                      {item.profile_id && <a className="mint-button mint-button--outline" href={`/profile?profile_id=${encodeURIComponent(item.profile_id)}`}>看能力</a>}
                       <button type="button" className="mint-button mint-button--quiet" onClick={() => void handleDelete(item)} disabled={deleting}>{deleting ? "正在删除…" : "删除记录"}</button>
                     </div>
                   </article>

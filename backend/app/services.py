@@ -1629,6 +1629,7 @@ def list_interview_history(db: Session) -> list[dict]:
             {
                 "session_id": session.id,
                 "status": session.status,
+                "profile_id": session.profile_id,
                 "project_name": project.project_name if project else None,
                 "direction": target.direction if target else None,
                 "target_title": target.target_title if target else None,

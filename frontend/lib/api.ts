@@ -158,6 +158,7 @@ export type SessionView = {
 export type InterviewHistoryItem = {
   session_id: string;
   status: string;
+  profile_id: string | null;
   project_name: string | null;
   direction: string | null;
   target_title: string | null;
@@ -169,6 +170,53 @@ export type InterviewHistoryItem = {
   gap_count: number | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ProfileSkill = {
+  skill_id: string;
+  skill_name: string;
+  category: string;
+  level: number;
+  confidence: number;
+  sample_count: number;
+  trend: string;
+  target_level: number | null;
+  last_session_id: string | null;
+};
+
+export type RecommendationStatus = "recommended" | "in_progress" | "completed" | "dismissed";
+
+export type LearningRecommendation = {
+  id: string;
+  skill_id: string;
+  skill_name: string;
+  priority: string;
+  reason: string;
+  actions: string[];
+  success_criteria: string[];
+  status: RecommendationStatus;
+  recommended_review_at: string | null;
+};
+
+export type ProfileSummary = {
+  profile_id: string;
+  direction: string;
+  level: string;
+  target_title: string;
+  summary: string;
+  last_session_id: string | null;
+  skills: ProfileSkill[];
+  recommendations: LearningRecommendation[];
+  updated_at: string;
+};
+
+export type ProfileSnapshot = {
+  id: string;
+  profile_id: string;
+  source_session_id: string;
+  version: number;
+  profile: Record<string, unknown>;
+  created_at: string;
 };
 
 export type AnswerInput = {
@@ -475,6 +523,24 @@ export function getInterviewHistory() {
 
 export function deleteInterview(sessionId: string) {
   return request<void>(`/api/sessions/${sessionId}`, { method: "DELETE" });
+}
+
+export function getProfileSummary(profileId: string) {
+  return request<ProfileSummary>(`/api/profiles/${profileId}/summary`);
+}
+
+export function getProfileHistory(profileId: string) {
+  return request<ProfileSnapshot[]>(`/api/profiles/${profileId}/history`);
+}
+
+export function updateRecommendationStatus(
+  recommendationId: string,
+  status: RecommendationStatus,
+) {
+  return request<LearningRecommendation>(`/api/recommendations/${recommendationId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
 }
 
 export function getModelSettings() {

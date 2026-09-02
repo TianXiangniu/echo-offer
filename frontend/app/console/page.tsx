@@ -133,6 +133,7 @@ export default function ModelConsolePage() {
           <nav className="mint-nav" aria-label="页面导航">
             <a className="mint-nav-link" href="/">返回准备</a>
             <a className="mint-nav-link" href="/history">面试记录</a>
+            <a className="mint-nav-link" href="/profile">能力概况</a>
             <span className="mint-nav-current">模型设置</span>
           </nav>
         </header>

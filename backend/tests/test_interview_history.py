@@ -50,6 +50,9 @@ def test_history_contains_project_name_and_null_report_counts(ai_client):
 
     assert response.status_code == 200
     item = next(row for row in response.json() if row["session_id"] == session_id)
+    with ai_client.app.state.session_factory() as db:
+        expected_profile_id = db.get(InterviewSession, session_id).profile_id
+    assert item["profile_id"] == expected_profile_id
     assert item["project_name"] == "企业知识库问答 Agent"
     assert item["completed"] == 0
     assert item["total"] == 8

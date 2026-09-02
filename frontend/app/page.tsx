@@ -170,6 +170,7 @@ export default function HomePage() {
             <span className="mint-nav-current">{brandCopy.preparation}</span>
             <span className="mint-nav-note">Agent 应用工程师</span>
             <a className="mint-nav-link" href="/history">面试记录</a>
+            <a className="mint-nav-link" href="/profile">能力概况</a>
             <a className="mint-nav-link" href="/console">模型设置</a>
           </nav>
         </header>

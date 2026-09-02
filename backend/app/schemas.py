@@ -323,6 +323,7 @@ class ReportResponse(BaseModel):
 class InterviewHistoryItem(BaseModel):
     session_id: str
     status: str
+    profile_id: str | None = None
     project_name: str | None = None
     direction: str | None = None
     target_title: str | None = None
