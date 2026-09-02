@@ -169,6 +169,7 @@ export default function HomePage() {
           <nav className="mint-nav" aria-label="页面导航">
             <span className="mint-nav-current">{brandCopy.preparation}</span>
             <span className="mint-nav-note">Agent 应用工程师</span>
+            <a className="mint-nav-link" href="/history">面试记录</a>
             <a className="mint-nav-link" href="/console">模型设置</a>
           </nav>
         </header>

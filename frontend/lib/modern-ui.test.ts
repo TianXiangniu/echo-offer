@@ -4,6 +4,7 @@ const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8")
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const interviewPage = readFileSync(new URL("../app/interview/[id]/page.tsx", import.meta.url), "utf8");
 const reportPage = readFileSync(new URL("../app/report/[id]/page.tsx", import.meta.url), "utf8");
+const consolePage = readFileSync(new URL("../app/console/page.tsx", import.meta.url), "utf8");
 const copy = readFileSync(new URL("./ui-copy.ts", import.meta.url), "utf8");
 
 for (const token of ["--color-mint-50", "--color-forest", "--color-coral", ".mint-page", ".mint-card", "prefers-reduced-motion"]) {
@@ -15,6 +16,13 @@ for (const [name, source] of [["home", homePage], ["interview", interviewPage], 
   if (source.includes("signal-rail") || source.includes("signal-workspace")) {
     throw new Error(`${name} page still uses the workbench layout`);
   }
+}
+
+for (const source of [homePage, consolePage]) {
+  if (!source.includes('href="/history"')) throw new Error("missing interview history navigation");
+}
+for (const token of ["mint-history", "mint-history-card", "mint-history-actions"]) {
+  if (!css.includes(token)) throw new Error(`missing history style: ${token}`);
 }
 
 for (const token of ["把你做过的项目，", "上传你的简历", "按真实面试的方式练一遍"]) {
