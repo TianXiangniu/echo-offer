@@ -31,6 +31,38 @@ class AgentProjectAnalysisRequest(BaseModel):
     resume_text: str = Field(min_length=1, max_length=100_000)
 
 
+class ModelSettingsUpdate(BaseModel):
+    base_url: str = Field(min_length=1, max_length=255)
+    model: str = Field(min_length=1, max_length=160)
+    assessment_model: str = Field(min_length=1, max_length=160)
+    api_key: str = Field(default="", max_length=1000)
+    clear_api_key: bool = False
+    temperature: float = Field(ge=0, le=2)
+    max_tokens: int = Field(ge=256, le=8192)
+    timeout_seconds: float = Field(ge=10, le=300)
+    assessment_batch_size: int = Field(ge=1, le=5)
+
+
+class ModelSettingsResponse(BaseModel):
+    base_url: str
+    model: str
+    assessment_model: str
+    temperature: float
+    max_tokens: int
+    timeout_seconds: float
+    assessment_batch_size: int
+    api_key_configured: bool
+    updated_at: datetime | None = None
+
+
+class ModelConnectionTestResponse(BaseModel):
+    ok: bool
+    message: str
+    model: str
+    latency_ms: int
+    error_code: str | None = None
+
+
 class ProjectAnalysisDetails(BaseModel):
     project_name: str = Field(default="", max_length=200)
     background_goal: str = Field(default="", max_length=4000)

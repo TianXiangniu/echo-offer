@@ -19,6 +19,29 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ModelSetting(Base):
+    __tablename__ = "model_settings"
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_model_settings_user"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    base_url: Mapped[str] = mapped_column(String(255))
+    model: Mapped[str] = mapped_column(String(160))
+    assessment_model: Mapped[str] = mapped_column(String(160))
+    temperature: Mapped[float] = mapped_column()
+    max_tokens: Mapped[int] = mapped_column(Integer)
+    timeout_seconds: Mapped[float] = mapped_column()
+    assessment_batch_size: Mapped[int] = mapped_column(Integer)
+    api_key: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+
 class Resume(Base):
     __tablename__ = "resumes"
 
