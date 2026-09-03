@@ -82,10 +82,12 @@ def test_update_candidate_profile_prefers_lower_level_then_earlier_question(
             )
         )
         assert len(runs) == 2
-        runs[0].aggregate_level = 3
-        runs[0].status = "valid"
-        runs[1].aggregate_level = 1
-        runs[1].status = "valid"
+        runs_by_question_id = {run.question_id: run for run in runs}
+        assert set(runs_by_question_id) == set(question_ids)
+        runs_by_question_id[question_ids[0]].aggregate_level = 3
+        runs_by_question_id[question_ids[0]].status = "valid"
+        runs_by_question_id[question_ids[1]].aggregate_level = 1
+        runs_by_question_id[question_ids[1]].status = "valid"
         db.commit()
         update_candidate_profile(db, session_id)
 
@@ -105,8 +107,10 @@ def test_update_candidate_profile_prefers_lower_level_then_earlier_question(
                 .order_by(AssessmentRun.question_id)
             )
         )
-        runs[0].aggregate_level = 2
-        runs[1].aggregate_level = 2
+        runs_by_question_id = {run.question_id: run for run in runs}
+        assert set(runs_by_question_id) == set(question_ids)
+        runs_by_question_id[question_ids[0]].aggregate_level = 2
+        runs_by_question_id[question_ids[1]].aggregate_level = 2
         db.commit()
         update_candidate_profile(db, session_id)
 
