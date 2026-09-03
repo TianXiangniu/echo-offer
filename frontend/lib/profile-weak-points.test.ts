@@ -8,6 +8,9 @@ const globals = readFileSync(new URL("../app/globals.css", import.meta.url), "ut
 
 assert.match(api, /source_session_id: string \| null/);
 assert.match(api, /source_question_id: string \| null/);
+assert.match(api, /source_question: string \| null/);
+assert.match(api, /source_answer_excerpt: string \| null/);
+assert.match(api, /source_level: number \| null/);
 assert.match(page, /我还要补什么/);
 assert.match(page, /优先回看/);
 assert.match(page, /接着练/);

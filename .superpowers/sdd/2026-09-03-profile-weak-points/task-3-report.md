@@ -32,3 +32,16 @@ Completed the frontend type sync and contract-test scaffolding for profile weak 
 
 - I did not modify page implementation, CSS, or backend code.
 - The workspace already contained unrelated changes outside this task; I left them untouched.
+
+## Follow-up round
+
+Reviewed the contract coverage gap and added the missing nullable fields to the API-source assertion set:
+
+- `source_question`
+- `source_answer_excerpt`
+- `source_level`
+
+Verification for this round:
+
+- `npm run test:profile` passes.
+- `npm run test:profile-weak-points` still fails on the existing page-source contract, as expected for the pre-implementation RED state.
