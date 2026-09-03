@@ -20,6 +20,12 @@ assert.match(page, /还没有足够的回答可以判断/);
 assert.match(page, /question-/);
 assert.match(report, /question-/);
 assert.match(globals, /\.mint-question-/);
+assert.match(globals, /\.mint-weak-point-list/);
+assert.match(globals, /\.mint-weak-point-card/);
+assert.match(globals, /\.mint-weak-point-source/);
+assert.match(globals, /\.mint-weak-point-actions/);
+assert.match(globals, /\.mint-profile-secondary/);
+assert.match(globals, /prefers-reduced-motion/);
 
 for (const forbidden of [
   "冻结事实",
