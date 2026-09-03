@@ -164,6 +164,7 @@ export type InterviewHistoryItem = {
   target_title: string | null;
   completed: number;
   total: number;
+  score_100: number | null;
   report_status: string | null;
   analysis_status: string | null;
   strength_count: number | null;
@@ -196,6 +197,11 @@ export type LearningRecommendation = {
   success_criteria: string[];
   status: RecommendationStatus;
   recommended_review_at: string | null;
+  source_session_id: string | null;
+  source_question_id: string | null;
+  source_question: string | null;
+  source_answer_excerpt: string | null;
+  source_level: number | null;
 };
 
 export type ProfileSummary = {
@@ -494,6 +500,7 @@ export function assessSession(sessionId: string) {
 export type Report = {
   session_id: string;
   completion: { completed: number; total: number };
+  score_100: number | null;
   coverage: number;
   anchor_coverage: { answered: number; total: number };
   strengths: Array<{ knowledge_point_id: string; level: number; confidence: number; evidence: string }>;
