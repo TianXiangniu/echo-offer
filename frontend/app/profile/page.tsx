@@ -13,6 +13,7 @@ import {
   type ProfileSummary,
   type RecommendationStatus,
 } from "@/lib/api";
+import { replaceRecommendation } from "@/lib/profile-state";
 
 type ProfileChoice = {
   id: string;
@@ -198,16 +199,7 @@ export default function ProfilePage() {
       setSummary((current) => current
         ? {
           ...current,
-          recommendations: current.recommendations.map((item) => item.id === updated.id
-            ? {
-              ...updated,
-              source_session_id: updated.source_session_id,
-              source_question_id: updated.source_question_id,
-              source_question: updated.source_question,
-              source_answer_excerpt: updated.source_answer_excerpt,
-              source_level: updated.source_level,
-            }
-            : item),
+          recommendations: replaceRecommendation(current.recommendations, updated),
         }
         : current);
     } catch (caught) {

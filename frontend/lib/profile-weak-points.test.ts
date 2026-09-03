@@ -1,5 +1,7 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import type { LearningRecommendation } from "./api.ts";
+import { replaceRecommendation } from "./profile-state.ts";
 
 const api = readFileSync(new URL("./api.ts", import.meta.url), "utf8");
 const page = readFileSync(new URL("../app/profile/page.tsx", import.meta.url), "utf8");
@@ -34,16 +36,58 @@ assert.match(page, /question-/);
 assert.match(report, /question-/);
 assert.match(globals, /\.mint-question-/);
 
-for (const field of [
-  "source_session_id",
-  "source_question_id",
-  "source_question",
-  "source_answer_excerpt",
-  "source_level",
-]) {
-  assert.match(page, new RegExp(`${field}:\\s*updated\\.${field}[,\\s]`));
-  assert.doesNotMatch(page, new RegExp(`${field}:\\s*updated\\.${field}\\s*\\?\\?`));
-}
+assert.match(page, /replaceRecommendation\(current\.recommendations, updated\)/);
+
+const currentRecommendation: LearningRecommendation = {
+  id: "recommendation-1",
+  skill_id: "skill-x",
+  skill_name: "技能 X",
+  priority: "high",
+  reason: "需要补充边界",
+  actions: ["重答一次"],
+  success_criteria: ["讲清边界"],
+  status: "in_progress",
+  recommended_review_at: null,
+  source_session_id: "session-1",
+  source_question_id: "question-1",
+  source_question: "第一场问题",
+  source_answer_excerpt: "第一场回答",
+  source_level: 3,
+};
+const otherRecommendation = { ...currentRecommendation, id: "recommendation-2" };
+const clearedRecommendation: LearningRecommendation = {
+  ...currentRecommendation,
+  status: "dismissed",
+  source_session_id: null,
+  source_question_id: null,
+  source_question: null,
+  source_answer_excerpt: null,
+  source_level: null,
+};
+const replacedWithNullSource = replaceRecommendation(
+  [currentRecommendation, otherRecommendation],
+  clearedRecommendation,
+);
+assert.deepEqual(replacedWithNullSource, [clearedRecommendation, otherRecommendation]);
+assert.equal(replacedWithNullSource[0].source_session_id, null);
+assert.equal(replacedWithNullSource[0].source_question_id, null);
+assert.equal(replacedWithNullSource[0].source_question, null);
+assert.equal(replacedWithNullSource[0].source_answer_excerpt, null);
+assert.equal(replacedWithNullSource[0].source_level, null);
+
+const refreshedRecommendation: LearningRecommendation = {
+  ...currentRecommendation,
+  status: "completed",
+  source_session_id: "session-2",
+  source_question_id: "question-2",
+  source_question: "第二场问题",
+  source_answer_excerpt: "第二场回答",
+  source_level: 1,
+};
+assert.deepEqual(
+  replaceRecommendation([currentRecommendation], refreshedRecommendation),
+  [refreshedRecommendation],
+);
 
 const weakPointCard = getRuleBlock(globals, "\\.mint-weak-point-card");
 assert.match(weakPointCard, /padding:\s*25px 27px 24px/);
