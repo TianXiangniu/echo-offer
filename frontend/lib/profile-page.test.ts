@@ -23,19 +23,21 @@ for (const token of [
   "getInterviewHistory",
   "getProfileSummary",
   "getProfileHistory",
-  "能力",
-  "接下来练什么",
-  "变化记录",
-  "开始练习",
-  "已完成",
-  "暂时放一放",
+  "我还要补什么",
+  "优先回看",
+  "接着练",
+  "再答几次看看",
+  "查看完整记录",
+  "以前的面试记录",
+  "查看这次回答",
+  "还没有足够的回答可以判断",
   "/profile",
 ]) {
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   assert.match(page, new RegExp(escaped), `missing profile page contract: ${token}`);
 }
 
-for (const token of ["0～100", "冻结事实", "盲评分器"]) {
+for (const token of ["0～100", "冻结事实", "盲评分器", "稳定程度", "有效样本", "画像"]) {
   assert.equal(page.includes(token), false, `internal wording should not appear: ${token}`);
 }
 

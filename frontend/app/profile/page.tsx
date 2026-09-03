@@ -36,10 +36,6 @@ function formatDate(value: string) {
   return Number.isNaN(date.getTime()) ? "时间未知" : dateFormatter.format(date);
 }
 
-function formatPercent(value: number) {
-  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
-}
-
 function buildProfileChoices(items: InterviewHistoryItem[]) {
   const choices = new Map<string, ProfileChoice>();
   for (const item of items) {
@@ -69,11 +65,11 @@ function trendCopy(trend: string) {
   return { label: "还需要更多回答", tone: "quiet" };
 }
 
-function priorityCopy(priority: string) {
-  if (priority === "high") return "优先补上";
-  if (priority === "medium") return "接着练";
-  if (priority === "insufficient_data") return "再答几次看看";
-  return "有空再练";
+function performanceCopy(level: number) {
+  if (level >= 3) return "已经比较稳了";
+  if (level >= 2) return "方向有了，再讲具体些";
+  if (level >= 1) return "还在把基础讲清楚";
+  return "先从核心思路开始补";
 }
 
 function statusCopy(status: RecommendationStatus) {
@@ -94,6 +90,32 @@ function statusAction(recommendation: LearningRecommendation) {
     return { label: "标记完成", status: "completed" as RecommendationStatus };
   }
   return { label: "开始练习", status: "in_progress" as RecommendationStatus };
+}
+
+const weakPointSections = [
+  { priority: "high", title: "优先回看", description: "先回到最值得重听的一次回答。" },
+  { priority: "medium", title: "接着练", description: "方向已经有了，再把细节讲完整。" },
+  { priority: "insufficient_data", title: "再答几次看看", description: "记录还少，先多答几次再下结论。" },
+] as const;
+
+function recommendationSourceHref(recommendation: LearningRecommendation): string | null {
+  if (!recommendation.source_session_id || !recommendation.source_question_id) {
+    return null;
+  }
+  return `/report/${encodeURIComponent(recommendation.source_session_id)}#question-${encodeURIComponent(recommendation.source_question_id)}`;
+}
+
+function plainRecommendationReason(recommendation: LearningRecommendation) {
+  if (!recommendation.source_question) {
+    return "还没有足够的回答可以判断，先积累几次相关回答。";
+  }
+  if (recommendation.priority === "high") {
+    return "这次回答提到了方向，但做法、边界或验证还可以说得更具体。";
+  }
+  if (recommendation.priority === "medium") {
+    return "方向基本清楚，再补上具体做法和限制。";
+  }
+  return "现在的记录还少，再答几次更容易看准。";
 }
 
 export default function ProfilePage() {
@@ -125,7 +147,7 @@ export default function ProfilePage() {
         : new URLSearchParams(window.location.search).get("profile_id") ?? "";
       setSelectedProfileId(nextChoices.find((choice) => choice.id === requestedId)?.id ?? nextChoices[0]?.id ?? "");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "读取能力概况失败，请稍后重试。");
+      setError(caught instanceof Error ? caught.message : "读取记录失败，请稍后重试。");
     } finally {
       setLoadingChoices(false);
     }
@@ -151,7 +173,7 @@ export default function ProfilePage() {
         setSnapshots(nextSnapshots);
       })
       .catch((caught) => {
-        if (!cancelled) setProfileError(caught instanceof Error ? caught.message : "读取能力概况失败，请稍后重试。");
+        if (!cancelled) setProfileError(caught instanceof Error ? caught.message : "读取记录失败，请稍后重试。");
       })
       .finally(() => {
         if (!cancelled) setLoadingProfile(false);
@@ -183,6 +205,8 @@ export default function ProfilePage() {
     }
   }
 
+  const weakRecommendations = summary?.recommendations.filter((recommendation) => recommendation.priority !== "low") ?? [];
+
   return (
     <main className="mint-page mint-page--profile">
       <div className="mint-shell">
@@ -194,16 +218,16 @@ export default function ProfilePage() {
           <nav className="mint-nav" aria-label="页面导航">
             <a className="mint-nav-link" href="/">返回准备</a>
             <a className="mint-nav-link" href="/history">面试记录</a>
-            <span className="mint-nav-current">能力概况</span>
+            <span className="mint-nav-current">我还要补什么</span>
             <a className="mint-nav-link" href="/console">模型设置</a>
           </nav>
         </header>
 
         <section className="mint-profile-intro" aria-labelledby="profile-title">
           <div>
-            <p className="mint-overline">能力概况</p>
-            <h1 id="profile-title" className="mint-profile-title">看看自己，正在往哪儿变强。</h1>
-            <p className="mint-lead">这里记录每次有效回答留下的变化，也把下一步要练的内容列清楚。</p>
+            <p className="mint-overline">最近几场面试</p>
+            <h1 id="profile-title" className="mint-profile-title">我还要补什么？</h1>
+            <p className="mint-lead">根据最近几场面试，整理出最值得回看的地方。</p>
           </div>
           <div className="mint-profile-counter" aria-label={`${choices.length} 个求职方向`}>
             <span>已记录方向</span>
@@ -220,12 +244,12 @@ export default function ProfilePage() {
         )}
 
         {loadingChoices ? (
-          <div className="mint-card mint-profile-empty"><p className="mint-note">正在读取你的能力记录…</p></div>
+          <div className="mint-card mint-profile-empty"><p className="mint-note">正在读取你的面试记录…</p></div>
         ) : !choices.length && !error ? (
-          <section className="mint-card mint-profile-empty" aria-label="空的能力概况">
+          <section className="mint-card mint-profile-empty" aria-label="空的薄弱项记录">
             <span className="mint-profile-empty-mark" aria-hidden="true">○</span>
-            <h2>还没有可以查看的能力记录</h2>
-            <p>完成一场面试后，这里会把你的回答变化和练习方向整理出来。</p>
+            <h2>还没有可以查看的面试记录</h2>
+            <p>完成一场面试后，这里会告诉你下一步先练什么。</p>
             <a className="mint-button mint-button--primary" href="/">开始第一场</a>
           </section>
         ) : (
@@ -266,28 +290,112 @@ export default function ProfilePage() {
                       <div>
                         <p className="mint-card-kicker">当前方向</p>
                         <h2 id="profile-overview-title" className="mint-profile-overview-title">{summary.target_title || selectedChoice?.targetTitle}</h2>
-                        <p className="mint-profile-overview-meta">{summary.direction} · {summary.level}</p>
+                        <p className="mint-profile-overview-meta">{summary.direction}</p>
                       </div>
                       <span className="mint-status-pill mint-status-pill--ready">已记录</span>
                     </div>
                     <p className="mint-profile-summary">{summary.summary || "完成更多有效回答后，这里会逐渐形成更清晰的能力概况。"}</p>
                     <div className="mint-profile-overview-stats">
-                      <div><span>相关面试</span><strong>{selectedSessions.length}</strong><small>场</small></div>
-                      <div><span>已完成</span><strong>{completedSessions}</strong><small>场</small></div>
+                      <div><span>参考面试</span><strong>{selectedSessions.length}</strong><small>场</small></div>
+                      <div><span>已结束</span><strong>{completedSessions}</strong><small>场</small></div>
                       <div><span>最近更新</span><strong>{formatDate(summary.updated_at)}</strong></div>
                     </div>
                   </section>
 
-                  <section className="mint-profile-section" aria-labelledby="profile-skills-title">
+                  <section className="mint-profile-section" aria-labelledby="profile-recommendations-title">
                     <div className="mint-profile-section-heading">
                       <div>
-                        <p className="mint-overline">回答留下的线索</p>
-                        <h2 id="profile-skills-title" className="mint-profile-section-title">能力</h2>
+                        <p className="mint-overline">根据最近的回答</p>
+                        <h2 id="profile-recommendations-title" className="mint-profile-section-title">优先处理的薄弱项</h2>
                       </div>
-                      <span className="mint-note">等级 0–4 · 不是总分</span>
+                    </div>
+                    {actionError && <p className="mint-alert" role="alert">{actionError}</p>}
+                    {!weakRecommendations.length ? (
+                      <div className="mint-card mint-profile-subempty">
+                        <p className="mint-note">目前没有需要优先补的地方，继续保持并积累新的回答。</p>
+                      </div>
+                    ) : (
+                      <div className="mint-weak-point-list">
+                        {weakPointSections.map((section) => {
+                          const items = weakRecommendations.filter((recommendation) => recommendation.priority === section.priority);
+                          return (
+                            <section className="mint-card mint-profile-subempty" key={section.priority}>
+                              <div className="mint-profile-section-heading">
+                                <div>
+                                  <p className="mint-overline">{section.title}</p>
+                                  <h3 className="mint-profile-section-title">{section.description}</h3>
+                                </div>
+                              </div>
+                              {!items.length ? (
+                                <p className="mint-note">这一类暂时还没有需要处理的题目。</p>
+                              ) : (
+                                <div className="mint-weak-point-list">
+                                  {items.map((recommendation) => {
+                                    const action = statusAction(recommendation);
+                                    const updating = updatingRecommendationId === recommendation.id;
+                                    const sourceHref = recommendationSourceHref(recommendation);
+                                    return (
+                                      <article className={`mint-card mint-weak-point-card ${recommendation.status === "dismissed" ? "is-dismissed" : ""}`} key={recommendation.id}>
+                                        <div className="mint-weak-point-heading">
+                                          <span>{recommendation.skill_name}</span>
+                                          <span>{section.title}</span>
+                                        </div>
+                                        <h3>{recommendation.source_question ?? "还没有足够的回答可以判断"}</h3>
+                                        <p className="mint-weak-point-reason">{plainRecommendationReason(recommendation)}</p>
+                                        {recommendation.source_answer_excerpt && (
+                                          <blockquote className="mint-weak-point-source">
+                                            你当时提到：{recommendation.source_answer_excerpt}
+                                          </blockquote>
+                                        )}
+                                        {!!recommendation.actions.length && (
+                                          <div className="mint-recommendation-block">
+                                            <span>建议怎么练</span>
+                                            <ul>
+                                              {recommendation.actions.slice(0, 3).map((item) => <li key={item}>{item}</li>)}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        {!!recommendation.success_criteria.length && (
+                                          <div className="mint-recommendation-block">
+                                            <span>练到什么程度算有感觉</span>
+                                            <ul>
+                                              {recommendation.success_criteria.slice(0, 3).map((item) => <li key={item}>{item}</li>)}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        <div className="mint-weak-point-actions">
+                                          {sourceHref && <a href={sourceHref}>查看这次回答</a>}
+                                          <button type="button" className="mint-button mint-button--primary" onClick={() => void changeRecommendationStatus(recommendation.id, action.status)} disabled={updating}>
+                                            {updating ? "正在更新…" : action.label}
+                                          </button>
+                                          {recommendation.status !== "dismissed" && recommendation.status !== "completed" && (
+                                            <button type="button" className="mint-button mint-button--quiet" onClick={() => void changeRecommendationStatus(recommendation.id, "dismissed")} disabled={updating}>
+                                              暂时放一放
+                                            </button>
+                                          )}
+                                        </div>
+                                        <p className="mint-note">{statusCopy(recommendation.status)}</p>
+                                      </article>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </section>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="mint-profile-section mint-profile-secondary" aria-labelledby="profile-skills-title">
+                    <div className="mint-profile-section-heading">
+                      <div>
+                        <p className="mint-overline">长期记录</p>
+                        <h2 id="profile-skills-title" className="mint-profile-section-title">查看完整记录</h2>
+                      </div>
                     </div>
                     {!summary.skills.length ? (
-                      <div className="mint-card mint-profile-subempty"><p className="mint-note">目前还没有足够的有效回答来判断能力变化。</p></div>
+                      <div className="mint-card mint-profile-subempty"><p className="mint-note">还没有足够的回答可以判断长期变化。</p></div>
                     ) : (
                       <div className="mint-profile-skill-list">
                         {summary.skills.map((skill) => {
@@ -301,57 +409,10 @@ export default function ProfilePage() {
                                 </div>
                                 <span className={`mint-profile-trend mint-profile-trend--${trend.tone}`}>{trend.label}</span>
                               </div>
-                              <div className="mint-level-dots" aria-label={`${skill.skill_name} 当前等级 ${skill.level}，共 4 级`}>
-                                {[0, 1, 2, 3, 4].map((level) => <span className={level <= skill.level ? "is-filled" : ""} key={level} />)}
-                              </div>
                               <div className="mint-profile-skill-details">
-                                <span>当前 <strong>{skill.level} / 4</strong></span>
-                                <span>目标 <strong>{skill.target_level == null ? "未设置" : `${skill.target_level} / 4`}</strong></span>
-                                <span>有效回答 <strong>{skill.sample_count} 次</strong></span>
-                                <span>稳定程度 <strong>{formatPercent(skill.confidence)}</strong></span>
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </section>
-
-                  <section className="mint-profile-section" aria-labelledby="profile-recommendations-title">
-                    <div className="mint-profile-section-heading">
-                      <div>
-                        <p className="mint-overline">根据最近的回答</p>
-                        <h2 id="profile-recommendations-title" className="mint-profile-section-title">接下来练什么</h2>
-                      </div>
-                      <span className="mint-note">先做最有用的一件</span>
-                    </div>
-                    {actionError && <p className="mint-alert" role="alert">{actionError}</p>}
-                    {!summary.recommendations.length ? (
-                      <div className="mint-card mint-profile-subempty"><p className="mint-note">目前没有新的练习建议，继续完成面试就好。</p></div>
-                    ) : (
-                      <div className="mint-recommendation-list">
-                        {summary.recommendations.map((recommendation) => {
-                          const action = statusAction(recommendation);
-                          const updating = updatingRecommendationId === recommendation.id;
-                          return (
-                            <article className={`mint-card mint-recommendation ${recommendation.status === "dismissed" ? "is-dismissed" : ""}`} key={recommendation.id}>
-                              <div className="mint-recommendation-top">
-                                <div>
-                                  <span className="mint-recommendation-priority">{priorityCopy(recommendation.priority)}</span>
-                                  <h3>{recommendation.skill_name}</h3>
-                                </div>
-                                <span className="mint-recommendation-status">{statusCopy(recommendation.status)}</span>
-                              </div>
-                              <p className="mint-recommendation-reason">{recommendation.reason}</p>
-                              {!!recommendation.actions.length && (
-                                <div className="mint-recommendation-block"><span>可以这样练</span><ul>{recommendation.actions.map((item) => <li key={item}>{item}</li>)}</ul></div>
-                              )}
-                              {!!recommendation.success_criteria.length && (
-                                <div className="mint-recommendation-block"><span>练到这里就算有收获</span><ul>{recommendation.success_criteria.map((item) => <li key={item}>{item}</li>)}</ul></div>
-                              )}
-                              <div className="mint-recommendation-actions">
-                                <button type="button" className="mint-button mint-button--primary" onClick={() => void changeRecommendationStatus(recommendation.id, action.status)} disabled={updating}>{updating ? "正在更新…" : action.label}</button>
-                                {recommendation.status !== "dismissed" && recommendation.status !== "completed" && <button type="button" className="mint-button mint-button--quiet" onClick={() => void changeRecommendationStatus(recommendation.id, "dismissed")} disabled={updating}>暂时放一放</button>}
+                                <span>最近表现 <strong>{performanceCopy(skill.level)}</strong></span>
+                                <span>相关回答 <strong>{skill.sample_count} 次</strong></span>
+                                <span>最近变化 <strong>{trend.label}</strong></span>
                               </div>
                             </article>
                           );
@@ -363,8 +424,8 @@ export default function ProfilePage() {
                   <section className="mint-profile-section" aria-labelledby="profile-timeline-title">
                     <div className="mint-profile-section-heading">
                       <div>
-                        <p className="mint-overline">每次有效面试都会留下一笔</p>
-                        <h2 id="profile-timeline-title" className="mint-profile-section-title">变化记录</h2>
+                        <p className="mint-overline">每次面试都会留下一笔</p>
+                        <h2 id="profile-timeline-title" className="mint-profile-section-title">以前的面试记录</h2>
                       </div>
                     </div>
                     {!snapshots.length ? (
@@ -387,7 +448,7 @@ export default function ProfilePage() {
           </div>
         )}
 
-        <footer className="mint-footer">本地单用户模式 · 能力概况来自已完成的有效回答</footer>
+        <footer className="mint-footer">本地单用户模式 · 记录来自已完成的面试回答</footer>
       </div>
     </main>
   );
