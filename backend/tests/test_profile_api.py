@@ -1,6 +1,6 @@
 from sqlalchemy import func, select
 
-from app.models import CandidateProfile, InterviewSession, ProfileSnapshot
+from app.models import CandidateProfile, InterviewQuestion, InterviewSession, ProfileSnapshot
 
 
 def submit_all_answers(client, session_id, questions, prefix):
@@ -33,6 +33,26 @@ def test_valid_batch_updates_profile_and_recommendations(ai_client, ai_session_c
     assert body["profile_id"] == profile_id
     assert body["skills"]
     assert "recommendations" in body
+
+    source = next(
+        item for item in body["recommendations"] if item["source_question_id"] is not None
+    )
+    assert source["source_session_id"] == session_id
+    assert source["source_level"] in {0, 1, 2, 3, 4}
+    assert len(source["source_answer_excerpt"]) <= 240
+
+    answer_index = next(
+        index
+        for index, question in enumerate(questions, start=1)
+        if question["id"] == source["source_question_id"]
+    )
+    answer_text = f"第 {answer_index} 题回答：我说明了机制、边界和工程取舍。"
+    assert answer_text.startswith(source["source_answer_excerpt"])
+
+    with ai_client.app.state.session_factory() as db:
+        source_question = db.get(InterviewQuestion, source["source_question_id"])
+        assert source_question is not None
+        assert source["source_question"] == source_question.prompt
 
 
 def test_failed_batch_does_not_update_profile(
