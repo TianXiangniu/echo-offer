@@ -201,11 +201,11 @@ export default function ProfilePage() {
           recommendations: current.recommendations.map((item) => item.id === updated.id
             ? {
               ...updated,
-              source_session_id: updated.source_session_id ?? item.source_session_id,
-              source_question_id: updated.source_question_id ?? item.source_question_id,
-              source_question: updated.source_question ?? item.source_question,
-              source_answer_excerpt: updated.source_answer_excerpt ?? item.source_answer_excerpt,
-              source_level: updated.source_level ?? item.source_level,
+              source_session_id: updated.source_session_id,
+              source_question_id: updated.source_question_id,
+              source_question: updated.source_question,
+              source_answer_excerpt: updated.source_answer_excerpt,
+              source_level: updated.source_level,
             }
             : item),
         }

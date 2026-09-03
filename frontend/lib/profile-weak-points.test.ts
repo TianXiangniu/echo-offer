@@ -34,6 +34,17 @@ assert.match(page, /question-/);
 assert.match(report, /question-/);
 assert.match(globals, /\.mint-question-/);
 
+for (const field of [
+  "source_session_id",
+  "source_question_id",
+  "source_question",
+  "source_answer_excerpt",
+  "source_level",
+]) {
+  assert.match(page, new RegExp(`${field}:\\s*updated\\.${field}[,\\s]`));
+  assert.doesNotMatch(page, new RegExp(`${field}:\\s*updated\\.${field}\\s*\\?\\?`));
+}
+
 const weakPointCard = getRuleBlock(globals, "\\.mint-weak-point-card");
 assert.match(weakPointCard, /padding:\s*25px 27px 24px/);
 

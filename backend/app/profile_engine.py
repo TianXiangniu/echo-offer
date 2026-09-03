@@ -33,6 +33,7 @@ class SkillSample:
     confidence: float
     assessed_at: datetime
     serious_error: bool = False
+    session_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,6 +382,7 @@ def update_candidate_profile(
                     / len(question_samples),
                     assessed_at=assessed_at,
                     serious_error=any(item.serious_error for item in question_samples),
+                    session_id=candidate_session.id,
                 )
             )
 
@@ -406,8 +408,9 @@ def update_candidate_profile(
         state.trend = aggregate.trend
         state.serious_error_count = aggregate.serious_error_count
         state.first_assessed_at = min(samples, key=lambda item: _datetime_key(item.assessed_at)).assessed_at
-        state.last_assessed_at = max(samples, key=lambda item: _datetime_key(item.assessed_at)).assessed_at
-        state.last_session_id = session.id
+        latest_sample = max(samples, key=lambda item: _datetime_key(item.assessed_at))
+        state.last_assessed_at = latest_sample.assessed_at
+        state.last_session_id = latest_sample.session_id
 
     db.flush()
     latest_version = db.scalar(

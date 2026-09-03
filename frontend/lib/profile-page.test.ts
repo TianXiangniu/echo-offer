@@ -43,10 +43,5 @@ for (const token of ["0～100", "冻结事实", "盲评分器", "稳定程度", 
 }
 
 assert.match(page, /#question-\$\{encodeURIComponent\(recommendation\.source_question_id\)\}/);
-assert.match(page, /source_session_id:\s*updated\.source_session_id\s*\?\?\s*item\.source_session_id/);
-assert.match(page, /source_question_id:\s*updated\.source_question_id\s*\?\?\s*item\.source_question_id/);
-assert.match(page, /source_question:\s*updated\.source_question\s*\?\?\s*item\.source_question/);
-assert.match(page, /source_answer_excerpt:\s*updated\.source_answer_excerpt\s*\?\?\s*item\.source_answer_excerpt/);
-assert.match(page, /source_level:\s*updated\.source_level\s*\?\?\s*item\.source_level/);
 
 console.log("profile page contract tests passed");
