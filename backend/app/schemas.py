@@ -359,6 +359,11 @@ class LearningRecommendationResponse(BaseModel):
     success_criteria: list[str]
     status: str
     recommended_review_at: datetime | None = None
+    source_session_id: str | None = None
+    source_question_id: str | None = None
+    source_question: str | None = None
+    source_answer_excerpt: str | None = None
+    source_level: int | None = Field(default=None, ge=0, le=4)
 
 
 class ProfileSummaryResponse(BaseModel):

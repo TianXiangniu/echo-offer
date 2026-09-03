@@ -1648,6 +1648,17 @@ def list_interview_history(db: Session) -> list[dict]:
 
 def _recommendation_response(db: Session, recommendation: LearningRecommendation) -> dict:
     skill = db.get(SkillCatalog, recommendation.skill_id)
+    state = db.scalar(
+        select(CandidateKnowledgeState).where(
+            CandidateKnowledgeState.profile_id == recommendation.profile_id,
+            CandidateKnowledgeState.skill_id == recommendation.skill_id,
+        )
+    )
+    source = _find_recommendation_source(
+        db,
+        skill_id=recommendation.skill_id,
+        preferred_session_id=state.last_session_id if state else None,
+    )
     return {
         "id": recommendation.id,
         "skill_id": recommendation.skill_id,
@@ -1658,6 +1669,78 @@ def _recommendation_response(db: Session, recommendation: LearningRecommendation
         "success_criteria": json.loads(recommendation.success_criteria_json),
         "status": recommendation.status,
         "recommended_review_at": recommendation.recommended_review_at,
+        **source,
+    }
+
+
+def _empty_recommendation_source() -> dict[str, object | None]:
+    return {
+        "source_session_id": None,
+        "source_question_id": None,
+        "source_question": None,
+        "source_answer_excerpt": None,
+        "source_level": None,
+    }
+
+
+def _find_recommendation_source(
+    db: Session,
+    *,
+    skill_id: str,
+    preferred_session_id: str | None,
+) -> dict[str, object | None]:
+    empty = _empty_recommendation_source()
+    if not preferred_session_id:
+        return empty
+    session = db.get(InterviewSession, preferred_session_id)
+    if session is None:
+        return empty
+
+    candidates = []
+    questions = db.scalars(
+        select(InterviewQuestion)
+        .where(
+            InterviewQuestion.session_id == session.id,
+            InterviewQuestion.knowledge_point_id == skill_id,
+        )
+        .order_by(InterviewQuestion.order.asc(), InterviewQuestion.id.asc())
+    )
+    for question in questions:
+        answer = db.scalar(
+            select(AnswerAttempt)
+            .where(
+                AnswerAttempt.session_id == session.id,
+                AnswerAttempt.question_id == question.id,
+                AnswerAttempt.status.in_(("submitted", "explicit_unknown")),
+            )
+            .order_by(AnswerAttempt.created_at.desc(), AnswerAttempt.id.desc())
+        )
+        if answer is None:
+            continue
+        run = db.scalar(
+            select(AssessmentRun)
+            .where(AssessmentRun.answer_id == answer.id)
+            .order_by(
+                AssessmentRun.attempt_number.desc(),
+                AssessmentRun.created_at.desc(),
+                AssessmentRun.id.desc(),
+            )
+        )
+        if run is None or run.status != "valid" or run.aggregate_level is None:
+            continue
+        candidates.append(
+            (run.aggregate_level, question.order, question.id, question, answer, run)
+        )
+
+    if not candidates:
+        return empty
+    _, _, _, question, answer, run = min(candidates, key=lambda item: item[:3])
+    return {
+        "source_session_id": None if session.archived_at is not None else session.id,
+        "source_question_id": question.id,
+        "source_question": question.prompt,
+        "source_answer_excerpt": answer.answer_text[:240],
+        "source_level": run.aggregate_level,
     }
 
 

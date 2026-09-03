@@ -222,17 +222,17 @@ def _ensure_role_requirement(
 def _recommendation_text(skill: SkillCatalog, state: CandidateKnowledgeState, requirement) -> tuple[str, list[str], list[str]]:
     gap = requirement.target_level - state.current_level
     if state.valid_sample_count == 0:
-        reason = f"目前还没有足够的回答记录来判断“{skill.canonical_name}”。"
-        actions = [f"先完成一道{skill.canonical_name}相关练习题", "记录自己的思路、边界和验证方式"]
-        criteria = ["能够完整说明方案、原因和限制"]
+        reason = f"还没有足够的回答可以判断“{skill.canonical_name}”，先积累几次相关回答。"
+        actions = [f"先回答一道{skill.canonical_name}相关问题", "说清楚自己的做法、原因和限制"]
+        criteria = ["能结合具体场景讲清楚方案和取舍"]
     elif gap > 0:
-        reason = f"最近记录显示“{skill.canonical_name}”目前约为 {state.current_level} 级，岗位目标为 {requirement.target_level} 级。"
+        reason = f"最近的回答提到了“{skill.canonical_name}”，但做法、边界或验证还可以说得更具体。"
         actions = [f"复习{skill.canonical_name}的核心机制", "用一个真实项目场景重新回答相关问题", "补充边界、故障和验证方式"]
-        criteria = [f"连续两次相关回答达到 {requirement.target_level} 级"]
+        criteria = ["连续两次相关回答都能讲清方案、原因和限制"]
     else:
-        reason = f"“{skill.canonical_name}”已经达到当前岗位要求，继续保持并补充真实案例。"
+        reason = f"“{skill.canonical_name}”最近保持得不错，可以继续用真实案例巩固。"
         actions = ["整理一个可复现的项目案例", "继续关注异常情况和方案取舍"]
-        criteria = ["能够结合场景说明方案和取舍"]
+        criteria = ["能结合场景说明方案和取舍"]
     return reason, actions, criteria
 
 
