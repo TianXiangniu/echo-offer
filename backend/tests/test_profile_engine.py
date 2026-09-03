@@ -130,18 +130,25 @@ def test_update_candidate_profile_ignores_invalid_runs_and_hides_archived_source
         assert question is not None
         run = db.scalar(select(AssessmentRun).where(AssessmentRun.question_id == question.id))
         assert run is not None
-        run.status = "pending"
+        for status in ("pending", "invalid", "rejected"):
+            run.status = status
+            db.commit()
+            update_candidate_profile(db, session_id)
+
+            summary = ai_client.get(f"/api/profiles/{profile_id}/summary").json()
+            recommendation = next(
+                item
+                for item in summary["recommendations"]
+                if item["skill_id"] == question.knowledge_point_id
+            )
+            assert recommendation["source_session_id"] is None
+            assert recommendation["source_question"] is None
+            assert recommendation["source_answer_excerpt"] is None
+            assert recommendation["source_level"] is None
+
+        run.status = "valid"
         db.commit()
         update_candidate_profile(db, session_id)
-
-    summary = ai_client.get(f"/api/profiles/{profile_id}/summary").json()
-    recommendation = next(
-        item for item in summary["recommendations"] if item["skill_id"] == question.knowledge_point_id
-    )
-    assert recommendation["source_session_id"] is None
-    assert recommendation["source_question"] is None
-    assert recommendation["source_answer_excerpt"] is None
-    assert recommendation["source_level"] is None
 
     with ai_client.app.state.session_factory() as db:
         session = db.get(InterviewSession, session_id)
