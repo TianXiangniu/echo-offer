@@ -196,7 +196,19 @@ export default function ProfilePage() {
     try {
       const updated = await updateRecommendationStatus(recommendationId, status);
       setSummary((current) => current
-        ? { ...current, recommendations: current.recommendations.map((item) => item.id === updated.id ? updated : item) }
+        ? {
+          ...current,
+          recommendations: current.recommendations.map((item) => item.id === updated.id
+            ? {
+              ...updated,
+              source_session_id: updated.source_session_id ?? item.source_session_id,
+              source_question_id: updated.source_question_id ?? item.source_question_id,
+              source_question: updated.source_question ?? item.source_question,
+              source_answer_excerpt: updated.source_answer_excerpt ?? item.source_answer_excerpt,
+              source_level: updated.source_level ?? item.source_level,
+            }
+            : item),
+        }
         : current);
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : "更新练习状态失败，请稍后重试。");
@@ -294,7 +306,7 @@ export default function ProfilePage() {
                       </div>
                       <span className="mint-status-pill mint-status-pill--ready">已记录</span>
                     </div>
-                    <p className="mint-profile-summary">{summary.summary || "完成更多有效回答后，这里会逐渐形成更清晰的能力概况。"}</p>
+                    <p className="mint-profile-summary">{summary.summary || "再完成几次面试，这里的建议会更具体。"}</p>
                     <div className="mint-profile-overview-stats">
                       <div><span>参考面试</span><strong>{selectedSessions.length}</strong><small>场</small></div>
                       <div><span>已结束</span><strong>{completedSessions}</strong><small>场</small></div>

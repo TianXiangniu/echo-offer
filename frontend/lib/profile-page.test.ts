@@ -31,6 +31,7 @@ for (const token of [
   "以前的面试记录",
   "查看这次回答",
   "还没有足够的回答可以判断",
+  "再完成几次面试，这里的建议会更具体。",
   "/profile",
 ]) {
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -40,5 +41,12 @@ for (const token of [
 for (const token of ["0～100", "冻结事实", "盲评分器", "稳定程度", "有效样本", "画像"]) {
   assert.equal(page.includes(token), false, `internal wording should not appear: ${token}`);
 }
+
+assert.match(page, /#question-\$\{encodeURIComponent\(recommendation\.source_question_id\)\}/);
+assert.match(page, /source_session_id:\s*updated\.source_session_id\s*\?\?\s*item\.source_session_id/);
+assert.match(page, /source_question_id:\s*updated\.source_question_id\s*\?\?\s*item\.source_question_id/);
+assert.match(page, /source_question:\s*updated\.source_question\s*\?\?\s*item\.source_question/);
+assert.match(page, /source_answer_excerpt:\s*updated\.source_answer_excerpt\s*\?\?\s*item\.source_answer_excerpt/);
+assert.match(page, /source_level:\s*updated\.source_level\s*\?\?\s*item\.source_level/);
 
 console.log("profile page contract tests passed");
