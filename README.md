@@ -99,7 +99,7 @@ $env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8010"
 
 每次整场评分都会记录一个独立的 `assessment_batch` 和 `operation_job`。评分阶段、完成或失败信息会写入 `operation_job_events`，因此可以通过 `GET /api/jobs/{job_id}` 查看本次分析过程和错误原因。面试历史使用 `GET /api/interviews/history`，画像摘要使用 `GET /api/profiles/{profile_id}/summary`，画像快照使用 `GET /api/profiles/{profile_id}/history`。
 
-浏览器访问 `http://localhost:3000/profile` 可以查看用户画像。页面会按求职方向整理能力等级、有效回答次数、变化记录和练习建议；建议状态可以直接更新。查看或切换画像只读取本地数据库，不会额外调用模型。
+浏览器访问 `http://localhost:3000/profile` 可以查看用户画像。页面会按求职方向整理能力等级、有效回答次数、变化记录和练习建议；建议状态可以直接更新。薄弱项会按“优先回看、接着练、再答几次看看”整理，并可跳回对应面试报告；记录不足时会直接说明，不把缺失记录当成答错。查看或切换画像只读取本地数据库，不会额外调用模型。
 
 数据库结构通过 Alembic 管理。需要手动执行迁移时，在项目根目录运行：
 
