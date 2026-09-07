@@ -78,7 +78,7 @@ def route_after_verification(state: InterviewGraphState) -> Route:
 
 def _route_after_advance(state: InterviewGraphState) -> Literal["ask", "wrap_up"]:
     plan = state.get("plan", [])
-    if state.get("current_node_index", 0) >= len(plan) - 1:
+    if state.get("current_node_index", 0) >= len(plan):
         return "wrap_up"
     return "ask"
 

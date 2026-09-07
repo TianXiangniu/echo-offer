@@ -130,11 +130,12 @@ def test_graph_exposes_explicit_nodes_and_resumes_after_checkpoint_reopen(tmp_pa
     second_checkpointer = create_checkpointer(str(database_path))
     try:
         resumed_graph = build_interview_graph(FakeInterviewAgents(), second_checkpointer)
-        for index in range(5):
+        for index in range(6):
             result = resumed_graph.invoke(Command(resume=f"回答 {index}"), config)
-            if index < 4:
+            if index < 5:
                 assert "__interrupt__" in result
             else:
                 assert result["status"] == "completed"
+                assert len(result["coverage"]) == 6
     finally:
         close_checkpointer(second_checkpointer)
