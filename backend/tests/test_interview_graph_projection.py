@@ -209,6 +209,20 @@ def test_graph_session_creation_projects_initial_state_event(tmp_path):
         ) == "state_updated"
 
 
+def test_graph_session_creation_rolls_back_if_bootstrap_projection_fails(tmp_path, monkeypatch):
+    factory, _ = _session_db(tmp_path, with_session=False)
+
+    def fail_projection(*args, **kwargs):
+        raise RuntimeError("projection unavailable")
+
+    monkeypatch.setattr("app.interview_graph_projection.project_graph_event", fail_projection)
+    with factory() as db:
+        with pytest.raises(RuntimeError, match="projection unavailable"):
+            create_session(db, "project-1", mode="graph")
+        db.rollback()
+        assert db.scalar(select(func.count(InterviewSession.id))) == 0
+
+
 def test_graph_checkpoint_state_maps_to_safe_session_view(tmp_path):
     factory, session_id = _session_db(tmp_path)
     state = {

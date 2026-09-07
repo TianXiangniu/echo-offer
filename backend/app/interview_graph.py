@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, Protocol
+from typing import Callable, Literal, Protocol
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -93,11 +93,30 @@ def _route_after_advance(state: InterviewGraphState) -> Literal["ask", "wrap_up"
 def build_interview_graph(
     agents: InterviewGraphAgents,
     checkpointer: BaseCheckpointSaver,
+    event_sink: Callable[[Mapping[str, object]], None] | None = None,
 ):
     """Compile the interview graph with an injected checkpointer."""
 
     def load_context(state: InterviewGraphState) -> dict:
         return {"status": "planning"}
+
+    def question_id(state: InterviewGraphState) -> str:
+        node = _current_node(state)
+        node_id = str(node.get("node_id", "unknown"))
+        followups = state.get("followups_used", {})
+        used = followups.get(node_id, followups.get(str(node.get("kind", "")), 0))
+        return f"graph-{state.get('session_id', 'session')}-{node_id}-{int(used or 0)}"
+
+    def emit(state: InterviewGraphState, event_kind: str, graph_step_id: str, payload: dict) -> None:
+        if event_sink is not None:
+            event_sink(
+                {
+                    "session_id": str(state.get("session_id", "")),
+                    "graph_step_id": graph_step_id,
+                    "event_kind": event_kind,
+                    "payload": payload,
+                }
+            )
 
     def planner(state: InterviewGraphState) -> dict:
         plan = state.get("plan", [])
@@ -119,6 +138,19 @@ def build_interview_graph(
             question_kind = "followup" if state.get("last_answer") else "opening"
 
         question = {"node_id": str(node.get("node_id", "unknown")), "text": text, "kind": question_kind}
+        current_question_id = question_id(state)
+        emit(
+            state,
+            "question_ready",
+            f"question:{current_question_id}",
+            {
+                "question_id": current_question_id,
+                "node_id": question["node_id"],
+                "kind": question_kind,
+                "text": text,
+                "order": state.get("current_node_index", 0),
+            },
+        )
         message = {"role": "interviewer", "node_id": question["node_id"], "content": text}
         return {"current_question": question, "messages": [message], "status": "awaiting_answer"}
 
@@ -130,6 +162,23 @@ def build_interview_graph(
         if not content:
             raise ValueError("candidate answer cannot be empty")
         node_id = str(question.get("node_id", "unknown"))
+        current_question_id = question_id(state)
+        submission_id = (
+            str(answer.get("client_submission_id"))
+            if isinstance(answer, Mapping) and answer.get("client_submission_id")
+            else f"graph-{current_question_id}"
+        )
+        emit(
+            state,
+            "candidate_answer",
+            f"answer:{current_question_id}",
+            {
+                "question_id": current_question_id,
+                "client_submission_id": submission_id,
+                "answer_text": content,
+                "status": "submitted",
+            },
+        )
         return {
             "last_answer": {"node_id": node_id, "content": content},
             "messages": [{"role": "candidate", "node_id": node_id, "content": content}],

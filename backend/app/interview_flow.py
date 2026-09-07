@@ -161,8 +161,8 @@ def create_session(
         )
         db.add(question)
         questions.append(question)
-    db.commit()
     if mode == "dialog":
+        db.commit()
         from .dialog_flow import ensure_intro
 
         ensure_intro(db, session)
@@ -177,7 +177,11 @@ def create_session(
                 "event_kind": "state_updated",
                 "payload": {"stage": "planning", "current_question_index": 0},
             },
+            commit=False,
         )
+        db.commit()
+    else:
+        db.commit()
     return {"session_id": session.id, "status": session.status, "questions": questions}
 
 def _question_response(question: InterviewQuestion) -> dict:

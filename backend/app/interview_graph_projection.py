@@ -26,6 +26,12 @@ from .workflow_common import ConflictError, NotFoundError, _hash_payload
 _EVENT_KINDS = {"question_ready", "candidate_answer", "state_updated", "completed"}
 
 
+def projected_graph_event_sink(db: Session):
+    """Return the production sink used by graph nodes to persist business events."""
+
+    return lambda event: project_graph_event(db, event)
+
+
 def _event_value(event: object, key: str, default=None):
     if isinstance(event, Mapping):
         return event.get(key, default)
@@ -175,7 +181,7 @@ def _project_answer(db: Session, session: InterviewSession, payload: Mapping) ->
     session.stage = "graph"
 
 
-def project_graph_event(db: Session, event: object) -> bool:
+def project_graph_event(db: Session, event: object, *, commit: bool = True) -> bool:
     """Apply one graph event once; replay returns False, conflicting replay raises 409."""
 
     session_id = str(_event_value(event, "session_id", ""))
@@ -218,7 +224,8 @@ def project_graph_event(db: Session, event: object) -> bool:
                 _project_answer(db, session, payload)
             else:
                 _apply_state(session, payload)
-        db.commit()
+        if commit:
+            db.commit()
     except IntegrityError:
         existing = db.scalar(
             select(InterviewGraphEventReceipt).where(

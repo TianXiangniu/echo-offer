@@ -174,3 +174,26 @@ def test_graph_enforces_followup_ceiling_on_real_route(tmp_path: Path, route: st
         assert current["followups_used"]["node-0"] == 2
     finally:
         close_checkpointer(checkpointer)
+
+
+def test_graph_emits_projectable_question_and_answer_events(tmp_path: Path):
+    events = []
+    checkpointer = create_checkpointer(str(tmp_path / "events.sqlite"))
+    try:
+        graph = build_interview_graph(
+            FakeInterviewAgents(), checkpointer, event_sink=events.append
+        )
+        config = graph_config("session-events")
+        assert "__interrupt__" in graph.invoke(
+            initial_state() | {"session_id": "session-events"}, config
+        )
+        graph.invoke(Command(resume="回答"), config)
+        assert [event["event_kind"] for event in events] == [
+            "question_ready",
+            "candidate_answer",
+            "question_ready",
+        ]
+        assert events[0]["session_id"] == "session-events"
+        assert events[1]["payload"]["question_id"] == events[0]["payload"]["question_id"]
+    finally:
+        close_checkpointer(checkpointer)
