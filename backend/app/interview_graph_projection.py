@@ -32,6 +32,18 @@ def projected_graph_event_sink(db: Session):
     return lambda event: project_graph_event(db, event)
 
 
+def build_projected_interview_graph(agents, checkpointer, db: Session):
+    """Build the graph with the application persistence sink already connected."""
+
+    from .interview_graph import build_interview_graph
+
+    return build_interview_graph(
+        agents,
+        checkpointer,
+        event_sink=projected_graph_event_sink(db),
+    )
+
+
 def _event_value(event: object, key: str, default=None):
     if isinstance(event, Mapping):
         return event.get(key, default)

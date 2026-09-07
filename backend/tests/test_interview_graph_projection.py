@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.database import create_database
+from app.main import create_app
 from app.interview_flow import create_session, get_session_view
 from app.models import (
     AnswerAttempt,
@@ -16,7 +17,10 @@ from app.models import (
     User,
 )
 from app.workflow_common import ConflictError
-from app.interview_graph_projection import project_graph_event
+from app.interview_graph_projection import (
+    build_projected_interview_graph,
+    project_graph_event,
+)
 
 
 def _session_db(tmp_path, *, mode="graph", with_session=True):
@@ -221,6 +225,18 @@ def test_graph_session_creation_rolls_back_if_bootstrap_projection_fails(tmp_pat
             create_session(db, "project-1", mode="graph")
         db.rollback()
         assert db.scalar(select(func.count(InterviewSession.id))) == 0
+
+
+def test_projected_graph_builder_is_available_for_app_runtime():
+    assert callable(build_projected_interview_graph)
+
+
+def test_app_registers_projected_graph_builder(tmp_path):
+    app = create_app(
+        f"sqlite:///{tmp_path / 'app.db'}",
+        upload_root=tmp_path / "uploads",
+    )
+    assert app.state.interview_graph_builder is build_projected_interview_graph
 
 
 def test_graph_checkpoint_state_maps_to_safe_session_view(tmp_path):

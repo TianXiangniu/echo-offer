@@ -70,6 +70,7 @@ from .schemas import (
     SessionView,
 )
 from .interview_flow import create_session, get_session_view, submit_answer
+from .interview_graph_projection import build_projected_interview_graph
 from .dialog_flow import (
     finish_dialog_early,
     handle_dialog_answer,
@@ -157,6 +158,7 @@ def create_app(
     engine, session_factory = create_database(database_url or DEFAULT_DATABASE_URL)
     app.state.engine = engine
     app.state.session_factory = session_factory
+    app.state.interview_graph_builder = build_projected_interview_graph
     app.state.upload_root = upload_root or DEFAULT_UPLOAD_ROOT
     with session_factory() as settings_db:
         app.state.model_settings = load_model_settings(settings_db)
