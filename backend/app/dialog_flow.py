@@ -360,6 +360,10 @@ def session_timeline(db: Session, session: InterviewSession) -> list[dict]:
     dialog 模式含开场白/深挖轮/衔接语/反问；classic 模式只有知识问答。
     教练便签（练习反馈）跟在对应回答之后。未问到的题不进时间线。
     """
+    if session.mode == "graph":
+        from .interview_graph_projection import graph_timeline
+
+        return graph_timeline(db, session)
     items: list[dict] = []
     dialogs = _dialogs(db, session.id) if session.mode == "dialog" else []
     wrapup = next((d for d in dialogs if d.kind == "wrapup"), None)

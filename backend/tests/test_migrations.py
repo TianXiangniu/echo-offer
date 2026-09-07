@@ -16,6 +16,7 @@ def test_existing_database_can_be_opened_again_without_losing_rows(tmp_path):
         assert db.scalar(select(User.id)) == "local-user"
         assert inspect(upgraded_engine).has_table("operation_jobs")
         assert inspect(upgraded_engine).has_table("assessment_batches")
+        assert inspect(upgraded_engine).has_table("interview_graph_event_receipts")
         session_columns = {
             column["name"]
             for column in inspect(upgraded_engine).get_columns("interview_sessions")

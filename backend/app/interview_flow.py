@@ -69,6 +69,8 @@ def create_session(
     question_specs: list[QuestionSpec] | None = None,
     mode: str = "classic",
 ) -> dict:
+    if mode == "graph" and question_specs is None:
+        question_specs = []
     project = db.get(ResumeProject, profile_id)
     if project is None:
         raise NotFoundError("profile not found")
@@ -136,7 +138,7 @@ def create_session(
         total_questions=len(question_specs),
         followup_budget_used=0,
         mode=mode,
-        stage="intro" if mode == "dialog" else "knowledge",
+        stage="intro" if mode == "dialog" else ("planning" if mode == "graph" else "knowledge"),
         workflow_version=WORKFLOW_VERSION,
         session_version=1,
     )
@@ -178,8 +180,16 @@ def _question_response(question: InterviewQuestion) -> dict:
         "rubric_version": question.rubric_version,
     }
 
-def get_session_view(db: Session, session_id: str) -> dict:
+def get_session_view(
+    db: Session,
+    session_id: str,
+    graph_state: dict | None = None,
+) -> dict:
     session = _get_active_session(db, session_id)
+    if session.mode == "graph":
+        from .interview_graph_projection import graph_session_view
+
+        return graph_session_view(db, session, graph_state)
     questions = list(
         db.scalars(
             select(InterviewQuestion)

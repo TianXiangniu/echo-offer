@@ -205,7 +205,7 @@ class ProfileResponse(BaseModel):
 
 class SessionCreate(BaseModel):
     profile_id: str
-    mode: Literal["classic", "dialog"] = "classic"
+    mode: Literal["classic", "dialog", "graph"] = "classic"
 
 
 class DialogAnswerSubmission(BaseModel):

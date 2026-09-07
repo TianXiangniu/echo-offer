@@ -253,6 +253,27 @@ class ProjectDialog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class InterviewGraphEventReceipt(Base):
+    """Durable idempotency receipt for LangGraph-to-legacy projections."""
+
+    __tablename__ = "interview_graph_event_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "graph_step_id",
+            "event_kind",
+            name="uq_graph_event_session_step_kind",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("interview_sessions.id"), index=True)
+    graph_step_id: Mapped[str] = mapped_column(String(160))
+    event_kind: Mapped[str] = mapped_column(String(60))
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class AnswerAttempt(Base):
     __tablename__ = "answer_attempts"
     __table_args__ = (
