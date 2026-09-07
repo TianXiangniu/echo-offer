@@ -10,6 +10,7 @@ from app.interview_graph_types import (
     InterviewPlanNode,
     InterviewerTurn,
 )
+import app.interview_graph_api as graph_api
 from app.main import create_app
 from app.models import AnswerAttempt
 
@@ -174,3 +175,34 @@ def test_graph_checkpoint_survives_app_restart(tmp_path):
         assert state.status_code == 200
         assert state.json()["progress"]["completed"] == 1
         assert state.json()["current_question"]["prompt"]
+
+
+def test_graph_state_replays_checkpoint_events_after_projection_failure(tmp_path, monkeypatch):
+    with _client(tmp_path) as client:
+        session_id = _graph_session(client)
+        assert client.post(f"/api/sessions/{session_id}/graph/start").status_code == 200
+        original = graph_api.project_graph_event
+        failed = {"value": True}
+
+        def fail_once(db, event, *, commit=True):
+            if failed["value"]:
+                failed["value"] = False
+                raise RuntimeError("projection unavailable")
+            return original(db, event, commit=commit)
+
+        monkeypatch.setattr(graph_api, "project_graph_event", fail_once)
+        with pytest.raises(RuntimeError, match="projection unavailable"):
+            client.post(
+                f"/api/sessions/{session_id}/graph/resume",
+                json={"answer_text": "等待补投影", "client_submission_id": "replay-1"},
+            )
+        monkeypatch.setattr(graph_api, "project_graph_event", original)
+
+        repaired = client.get(f"/api/sessions/{session_id}/graph/state")
+        assert repaired.status_code == 200
+        with client.app.state.session_factory() as db:
+            answer = db.scalar(
+                select(AnswerAttempt).where(AnswerAttempt.session_id == session_id)
+            )
+            assert answer is not None
+            assert answer.client_submission_id == "replay-1"

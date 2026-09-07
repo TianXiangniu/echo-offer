@@ -52,6 +52,13 @@ class MessageState(TypedDict):
     content: str
 
 
+class GraphEventState(TypedDict):
+    session_id: str
+    graph_step_id: str
+    event_kind: Literal["question_ready", "candidate_answer"]
+    payload: dict
+
+
 class CandidateAnswerState(TypedDict):
     node_id: str
     content: str
@@ -77,6 +84,7 @@ class InterviewGraphState(TypedDict):
     current_node_index: int
     current_question: QuestionState | None
     messages: Annotated[list[MessageState], operator.add]
+    graph_events: Annotated[list[GraphEventState], operator.add]
     last_answer: CandidateAnswerState | None
     coverage: dict[str, list[str]]
     conflicts: list[ConflictState]

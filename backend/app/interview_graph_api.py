@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 
 from langgraph.types import Command
 from sqlalchemy import select
@@ -45,6 +45,7 @@ def _initial_state(session: InterviewSession, project: ResumeProject) -> dict:
         "current_node_index": 0,
         "current_question": None,
         "messages": [],
+        "graph_events": [],
         "last_answer": None,
         "coverage": {},
         "conflicts": [],
@@ -55,8 +56,24 @@ def _initial_state(session: InterviewSession, project: ResumeProject) -> dict:
     }
 
 
+def _repair_projection(db: Session, session_id: str, state: Mapping) -> None:
+    events = state.get("graph_events", [])
+    if not isinstance(events, list) or not events:
+        return
+    db.rollback()
+    try:
+        for event in events:
+            if isinstance(event, Mapping):
+                project_graph_event(db, event, commit=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
 def _public_state(db: Session, session_id: str, graph) -> dict:
     state = graph.get_state(graph_config(session_id)).values
+    _repair_projection(db, session_id, state)
     return get_session_view(db, session_id, state)
 
 

@@ -107,16 +107,16 @@ def build_interview_graph(
         used = followups.get(node_id, followups.get(str(node.get("kind", "")), 0))
         return f"graph-{state.get('session_id', 'session')}-{node_id}-{int(used or 0)}"
 
-    def emit(state: InterviewGraphState, event_kind: str, graph_step_id: str, payload: dict) -> None:
+    def emit(state: InterviewGraphState, event_kind: str, graph_step_id: str, payload: dict) -> dict:
+        event = {
+            "session_id": str(state.get("session_id", "")),
+            "graph_step_id": graph_step_id,
+            "event_kind": event_kind,
+            "payload": payload,
+        }
         if event_sink is not None:
-            event_sink(
-                {
-                    "session_id": str(state.get("session_id", "")),
-                    "graph_step_id": graph_step_id,
-                    "event_kind": event_kind,
-                    "payload": payload,
-                }
-            )
+            event_sink(event)
+        return event
 
     def planner(state: InterviewGraphState) -> dict:
         plan = state.get("plan", [])
@@ -139,7 +139,7 @@ def build_interview_graph(
 
         question = {"node_id": str(node.get("node_id", "unknown")), "text": text, "kind": question_kind}
         current_question_id = question_id(state)
-        emit(
+        event = emit(
             state,
             "question_ready",
             f"question:{current_question_id}",
@@ -152,7 +152,12 @@ def build_interview_graph(
             },
         )
         message = {"role": "interviewer", "node_id": question["node_id"], "content": text}
-        return {"current_question": question, "messages": [message], "status": "awaiting_answer"}
+        return {
+            "current_question": question,
+            "messages": [message],
+            "graph_events": [event],
+            "status": "awaiting_answer",
+        }
 
     def wait_for_candidate(state: InterviewGraphState) -> dict:
         question = state.get("current_question") or {}
@@ -168,7 +173,7 @@ def build_interview_graph(
             if isinstance(answer, Mapping) and answer.get("client_submission_id")
             else f"graph-{current_question_id}"
         )
-        emit(
+        event = emit(
             state,
             "candidate_answer",
             f"answer:{current_question_id}",
@@ -182,6 +187,7 @@ def build_interview_graph(
         return {
             "last_answer": {"node_id": node_id, "content": content},
             "messages": [{"role": "candidate", "node_id": node_id, "content": content}],
+            "graph_events": [event],
             "status": "verifying",
         }
 
