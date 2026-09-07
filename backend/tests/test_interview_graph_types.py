@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from app.interview_graph_types import (
     EvidenceVerification,
+    InterviewGraphStatePayload,
     InterviewPlan,
     InterviewPlanNode,
     InterviewerTurn,
@@ -91,6 +92,45 @@ def valid_verifier_payload():
     }
 
 
+def valid_graph_state_payload():
+    return {
+        "session_id": "session-1",
+        "project": {
+            "project_id": "project-1",
+            "name": "Echo Offer",
+            "summary": "面向求职者的 AI 模拟面试系统。",
+        },
+        "verified_facts": [
+            {
+                "fact_id": "fact-1",
+                "summary": "使用 LangGraph 编排面试流程。",
+                "source": "resume",
+            }
+        ],
+        "plan": valid_plan_payload()["nodes"],
+        "current_node_index": 0,
+        "current_question": {
+            "node_id": "plan-1",
+            "text": "先做个简短自我介绍。",
+            "kind": "opening",
+        },
+        "messages": [
+            {
+                "role": "interviewer",
+                "node_id": "plan-1",
+                "content": "先做个简短自我介绍。",
+            }
+        ],
+        "last_answer": None,
+        "coverage": {"plan-1": ["self_intro"]},
+        "conflicts": [],
+        "followups_used": {"plan-1": 0},
+        "route": "covered",
+        "status": "awaiting_answer",
+        "error": None,
+    }
+
+
 def test_plan_requires_six_unique_nodes_and_core_dimensions():
     payload = valid_plan_payload()
     payload["nodes"] = payload["nodes"][:5]
@@ -159,3 +199,37 @@ def test_types_are_json_serializable():
         "tradeoff",
         "evidence",
     }
+
+
+@pytest.mark.parametrize(
+    ("container", "unsafe_key"),
+    [
+        ("state", "api_key"),
+        ("project", "resume_text"),
+        ("question", "raw_model_response"),
+        ("message", "chain_of_thought"),
+    ],
+)
+def test_graph_state_validates_a_complete_safe_json_payload(container, unsafe_key):
+    payload = valid_graph_state_payload()
+    state = InterviewGraphStatePayload.model_validate(payload)
+
+    assert json.loads(json.dumps(state.model_dump(mode="json"), ensure_ascii=False)) == payload
+
+    containers = {
+        "state": payload,
+        "project": payload["project"],
+        "question": payload["current_question"],
+        "message": payload["messages"][0],
+    }
+    containers[container][unsafe_key] = "unsafe"
+    with pytest.raises(ValidationError):
+        InterviewGraphStatePayload.model_validate(payload)
+
+
+def test_graph_state_rejects_followups_above_the_node_cap():
+    payload = valid_graph_state_payload()
+    payload["followups_used"]["plan-1"] = MAX_FOLLOWUPS_PER_NODE + 1
+
+    with pytest.raises(ValidationError):
+        InterviewGraphStatePayload.model_validate(payload)

@@ -3,7 +3,7 @@
 import operator
 from typing import Annotated, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 
 
 REQUIRED_PLAN_KINDS = {
@@ -17,23 +17,149 @@ REQUIRED_PLAN_KINDS = {
 MAX_FOLLOWUPS_PER_NODE = 2
 
 
+class ProjectSummaryState(TypedDict):
+    project_id: str
+    name: str
+    summary: str
+
+
+class VerifiedFactState(TypedDict):
+    fact_id: str
+    summary: str
+    source: Literal["resume", "candidate"]
+
+
+class InterviewPlanNodeState(TypedDict):
+    node_id: str
+    kind: str
+    goal: str
+    project_fact_ids: list[str]
+    required_targets: list[str]
+    opening_question: str
+    rubric_ids: list[str]
+    max_followups: int
+
+
+class QuestionState(TypedDict):
+    node_id: str
+    text: str
+    kind: Literal["opening", "followup", "clarification", "wrap_up"]
+
+
+class MessageState(TypedDict):
+    role: Literal["interviewer", "candidate"]
+    node_id: str
+    content: str
+
+
+class CandidateAnswerState(TypedDict):
+    node_id: str
+    content: str
+
+
+class ConflictState(TypedDict):
+    target: str
+    detail: str
+
+
+class GraphErrorState(TypedDict):
+    code: str
+    message: str
+
+
 class InterviewGraphState(TypedDict):
-    """JSON-serializable state persisted by LangGraph checkpoints."""
+    """Safe, JSON-only state persisted by LangGraph checkpoints."""
 
     session_id: str
-    project: dict
-    verified_facts: list[dict]
-    plan: list[dict]
+    project: ProjectSummaryState
+    verified_facts: list[VerifiedFactState]
+    plan: list[InterviewPlanNodeState]
     current_node_index: int
-    current_question: dict | None
-    messages: Annotated[list[dict], operator.add]
-    last_answer: dict | None
+    current_question: QuestionState | None
+    messages: Annotated[list[MessageState], operator.add]
+    last_answer: CandidateAnswerState | None
     coverage: dict[str, list[str]]
-    conflicts: list[dict]
+    conflicts: list[ConflictState]
     followups_used: dict[str, int]
     route: Literal["conflict", "insufficient", "covered", "completed"]
-    status: str
-    error: dict | None
+    status: Literal["planning", "awaiting_answer", "verifying", "completed", "failed"]
+    error: GraphErrorState | None
+
+
+class ProjectSummaryPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: StrictStr = Field(min_length=1, max_length=128)
+    name: StrictStr = Field(min_length=1, max_length=200)
+    summary: StrictStr = Field(min_length=1, max_length=2_000)
+
+
+class VerifiedFactPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fact_id: StrictStr = Field(min_length=1, max_length=128)
+    summary: StrictStr = Field(min_length=1, max_length=1_000)
+    source: Literal["resume", "candidate"]
+
+
+class QuestionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: StrictStr = Field(min_length=1, max_length=128)
+    text: StrictStr = Field(min_length=1, max_length=4_000)
+    kind: Literal["opening", "followup", "clarification", "wrap_up"]
+
+
+class MessagePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["interviewer", "candidate"]
+    node_id: StrictStr = Field(min_length=1, max_length=128)
+    content: StrictStr = Field(min_length=1, max_length=8_000)
+
+
+class CandidateAnswerPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: StrictStr = Field(min_length=1, max_length=128)
+    content: StrictStr = Field(min_length=1, max_length=8_000)
+
+
+class ConflictPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target: StrictStr = Field(min_length=1, max_length=256)
+    detail: StrictStr = Field(min_length=1, max_length=1_000)
+
+
+class GraphErrorPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: StrictStr = Field(min_length=1, max_length=128)
+    message: StrictStr = Field(min_length=1, max_length=1_000)
+
+
+class InterviewGraphStatePayload(BaseModel):
+    """Runtime validator that converts safe payloads to checkpoint dictionaries."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: StrictStr = Field(min_length=1, max_length=128)
+    project: ProjectSummaryPayload
+    verified_facts: list[VerifiedFactPayload]
+    plan: list["InterviewPlanNode"]
+    current_node_index: int = Field(ge=0)
+    current_question: QuestionPayload | None
+    messages: list[MessagePayload]
+    last_answer: CandidateAnswerPayload | None
+    coverage: dict[StrictStr, list[StrictStr]]
+    conflicts: list[ConflictPayload]
+    followups_used: dict[
+        StrictStr, Annotated[int, Field(ge=0, le=MAX_FOLLOWUPS_PER_NODE)]
+    ]
+    route: Literal["conflict", "insufficient", "covered", "completed"]
+    status: Literal["planning", "awaiting_answer", "verifying", "completed", "failed"]
+    error: GraphErrorPayload | None
 
 
 class InterviewPlanNode(BaseModel):
