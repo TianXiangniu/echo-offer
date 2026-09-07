@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from uuid import uuid4
 
 from sqlalchemy import func, select
@@ -208,6 +208,74 @@ def _split_assessment_cases(
     size = max(1, batch_size)
     return [tuple(cases[index : index + size]) for index in range(0, len(cases), size)]
 
+
+def build_graph_assessment_payload(graph_state: Mapping) -> list[dict]:
+    """Build blind scoring inputs from a finalized graph transcript."""
+
+    plan = [item for item in graph_state.get("plan", []) if isinstance(item, Mapping)]
+    messages = [item for item in graph_state.get("messages", []) if isinstance(item, Mapping)]
+    coverage = graph_state.get("coverage", {})
+    coverage = coverage if isinstance(coverage, Mapping) else {}
+    conflicts = graph_state.get("conflicts", [])
+    conflicts = conflicts if isinstance(conflicts, list) else []
+    result: list[dict] = []
+    for node in plan:
+        node_id = str(node.get("node_id", ""))
+        node_messages = [
+            item for item in messages if str(item.get("node_id", "")) == node_id
+        ]
+        question = next(
+            (
+                str(item.get("content", ""))
+                for item in node_messages
+                if item.get("role") == "interviewer"
+            ),
+            str(node.get("opening_question", "")),
+        )
+        answer = next(
+            (
+                str(item.get("content", ""))
+                for item in reversed(node_messages)
+                if item.get("role") == "candidate"
+            ),
+            "",
+        )
+        result.append(
+            {
+                "plan_node_id": node_id,
+                "node_kind": str(node.get("kind", "")),
+                "question": question,
+                "answer": answer,
+                "rubric_ids": [
+                    str(item) for item in node.get("rubric_ids", []) if str(item).strip()
+                ],
+                "required_targets": [
+                    str(item)
+                    for item in node.get("required_targets", [])
+                    if str(item).strip()
+                ],
+                "covered_targets": [
+                    str(item)
+                    for item in coverage.get(node_id, [])
+                    if str(item).strip()
+                ],
+                "conflicts": [
+                    str(item.get("detail", ""))
+                    for item in conflicts
+                    if isinstance(item, Mapping)
+                    and str(item.get("target", "")) == str(node.get("kind", ""))
+                ],
+            }
+        )
+    return result
+
+
+def _plan_node_id(question: InterviewQuestion, session: InterviewSession) -> str | None:
+    if session.mode != "graph":
+        return None
+    value = str(question.knowledge_point_id or "")
+    return value.removeprefix("graph.") or None
+
 def assess_session(
     db: Session,
     session_id: str,
@@ -227,6 +295,10 @@ def assess_session(
             .order_by(InterviewQuestion.order)
         )
     )
+    if session.mode == "graph":
+        session.total_questions = len(questions)
+        if session.status != "completed":
+            raise ConflictError("面试尚未完成")
     answers = list(
         db.scalars(
             select(AnswerAttempt)
@@ -329,6 +401,7 @@ def assess_session(
             id=str(uuid4()),
             answer_id=answer.id,
             question_id=question.id,
+            plan_node_id=_plan_node_id(question, session),
             evaluator=evaluator,
             rubric_version=rubric.version,
             status="pending",
@@ -549,6 +622,7 @@ def assess_session(
                     id=str(uuid4()),
                     answer_id=run.answer_id,
                     question_id=run.question_id,
+                    plan_node_id=run.plan_node_id,
                     evaluator=evaluator,
                     rubric_version=run.rubric_version,
                     status="pending",

@@ -319,6 +319,7 @@ class AssessmentRun(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     answer_id: Mapped[str] = mapped_column(ForeignKey("answer_attempts.id"), index=True)
     question_id: Mapped[str] = mapped_column(ForeignKey("interview_questions.id"), index=True)
+    plan_node_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
     evaluator: Mapped[str] = mapped_column(String(80))
     rubric_version: Mapped[str] = mapped_column(String(60))
     status: Mapped[str] = mapped_column(String(30), default="pending")

@@ -246,6 +246,12 @@ def project_graph_event(db: Session, event: object, *, commit: bool = True) -> b
                 _project_answer(db, session, payload)
             else:
                 _apply_state(session, payload)
+                if event_kind == "completed":
+                    session.total_questions = db.scalar(
+                        select(func.count(InterviewQuestion.id)).where(
+                            InterviewQuestion.session_id == session.id
+                        )
+                    ) or session.total_questions
         if commit:
             db.commit()
     except IntegrityError:

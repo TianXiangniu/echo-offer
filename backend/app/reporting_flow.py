@@ -131,6 +131,7 @@ def _build_report_payload(
             rubric_items.extend(
                 {
                     "question_id": answer.question_id,
+                    "plan_node_id": run.plan_node_id,
                     "knowledge_point_id": by_question[answer.question_id].knowledge_point_id,
                     "rubric_id": item.rubric_id,
                     "level": item.level,
@@ -154,6 +155,7 @@ def _build_report_payload(
             report_observations.append(
                 {
                     "question_id": answer.question_id,
+                    "plan_node_id": run.plan_node_id,
                     "level": run.aggregate_level,
                     "confidence": run.aggregate_confidence or 0.0,
                     "evidence": evidence.quoted_text if evidence else answer.answer_text,
@@ -164,6 +166,7 @@ def _build_report_payload(
         distribution[str(observation["level"])] += 1
         item = {
             "knowledge_point_id": by_question[observation["question_id"]].knowledge_point_id,
+            "plan_node_id": observation["plan_node_id"],
             "level": observation["level"],
             "confidence": observation["confidence"],
             "evidence": observation["evidence"],
@@ -251,6 +254,7 @@ def _build_transcript(db: Session, session_id: str) -> list[dict]:
                 "category": question.category,
                 "prompt": question.prompt,
                 "knowledge_point_id": question.knowledge_point_id,
+                "plan_node_id": run.plan_node_id if run else None,
                 "status": answer.status if answer else "unanswered",
                 "answer_text": answer.answer_text if answer else "",
                 "followups": [

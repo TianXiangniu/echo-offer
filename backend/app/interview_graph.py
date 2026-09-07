@@ -243,7 +243,23 @@ def build_interview_graph(
         }
 
     def wrap_up(state: InterviewGraphState) -> dict:
-        return {"route": "completed", "status": "completed", "current_question": None}
+        plan = state.get("plan", [])
+        event = emit(
+            state,
+            "completed",
+            "completed",
+            {
+                "status": "completed",
+                "current_question_index": len(plan),
+                "total_questions": len(plan),
+            },
+        )
+        return {
+            "route": "completed",
+            "status": "completed",
+            "current_question": None,
+            "graph_events": [event],
+        }
 
     def finalize_transcript(state: InterviewGraphState) -> dict:
         return {"status": "completed"}

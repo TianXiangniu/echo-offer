@@ -61,6 +61,15 @@ DEFAULT_SKILLS = {
     "engineering.output_safety": ("模型输出安全", "工程实践"),
 }
 
+_GRAPH_KIND_TO_SKILL = {
+    "opening": "project.ownership_and_context",
+    "project": "project.ownership_and_context",
+    "architecture": "project.architecture_tradeoffs",
+    "challenge": "project.architecture_tradeoffs",
+    "tradeoff": "project.architecture_tradeoffs",
+    "evidence": "project.evaluation_and_reproducibility",
+}
+
 
 def _datetime_key(value: datetime) -> datetime:
     """Make SQLite-naive and timezone-aware datetimes comparable."""
@@ -148,7 +157,13 @@ def _ensure_skill(db: Session, knowledge_point_id: str) -> SkillCatalog:
 
 
 def _ensure_question_skill(db: Session, question: InterviewQuestion) -> SkillCatalog:
-    skill = _ensure_skill(db, question.knowledge_point_id)
+    skill_id = str(question.knowledge_point_id)
+    if skill_id.startswith("graph."):
+        skill_id = _GRAPH_KIND_TO_SKILL.get(
+            question.category,
+            skill_id.removeprefix("graph."),
+        )
+    skill = _ensure_skill(db, skill_id)
     mapping = db.scalar(
         select(QuestionSkill).where(
             QuestionSkill.question_id == question.id,
