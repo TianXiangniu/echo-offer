@@ -147,12 +147,47 @@ export type SessionResponse = {
   questions: Question[];
 };
 
+export type FollowupView = {
+  id: string;
+  question_id: string;
+  question_text: string;
+  decision_reason: string;
+  status: "pending" | "answered" | "waived" | string;
+  answer_text: string | null;
+};
+
+export type PracticeFeedbackView = {
+  content: string;
+  focus_hints: string[];
+};
+
+export type DialogMessage = {
+  role: "interviewer" | "candidate" | "coach";
+  kind: string;
+  content: string;
+  tag?: string | null;
+  question_id?: string;
+};
+
 export type SessionView = {
   session_id: string;
   status: string;
-  current_question: Question | null;
-  questions: Array<Question & { answered: boolean }>;
+  mode: string;
+  stage: string;
+  current_question: (Question & {
+    answered?: boolean;
+    followup?: FollowupView | null;
+    feedback?: PracticeFeedbackView | null;
+  }) | null;
+  questions: Array<
+    Question & {
+      answered: boolean;
+      followup?: FollowupView | null;
+      feedback?: PracticeFeedbackView | null;
+    }
+  >;
   progress: { completed: number; total: number };
+  timeline: DialogMessage[];
 };
 
 export type InterviewHistoryItem = {
@@ -183,6 +218,11 @@ export type ProfileSkill = {
   trend: string;
   target_level: number | null;
   last_session_id: string | null;
+  recent_levels: number[];
+  studied: boolean;
+  freshness: "fresh" | "cooling" | "stale" | "no_data";
+  days_since: number | null;
+  recent_answers: Array<{ prompt: string; level: number; commentary: string; session_id: string }>;
 };
 
 export type RecommendationStatus = "recommended" | "in_progress" | "completed" | "dismissed";
@@ -197,11 +237,17 @@ export type LearningRecommendation = {
   success_criteria: string[];
   status: RecommendationStatus;
   recommended_review_at: string | null;
+  practice_completed_at?: string | null;
+  verification_ready?: boolean;
   source_session_id: string | null;
   source_question_id: string | null;
   source_question: string | null;
   source_answer_excerpt: string | null;
   source_level: number | null;
+  level: number | null;
+  studied: boolean;
+  is_unknown: boolean;
+  last_assessed_at: string | null;
 };
 
 export type ProfileSummary = {
@@ -213,6 +259,14 @@ export type ProfileSummary = {
   last_session_id: string | null;
   skills: ProfileSkill[];
   recommendations: LearningRecommendation[];
+  recent_changes: Array<{ skill_id: string; skill_name: string; delta: number }>;
+  readiness: number | null;
+  avg_target: number | null;
+  question_angles: Array<{ tag: string; count: number }>;
+  practice_effectiveness: { pairs: number; effective: number };
+  verifiable_count: number;
+  target_date: string | null;
+  today_plan: Array<{ type: string; skill_id: string | null; skill_name: string; reason: string; recommendation_id?: string }>;
   updated_at: string;
 };
 
@@ -230,17 +284,6 @@ export type AnswerInput = {
   client_submission_id: string;
   status: "submitted" | "explicit_unknown" | "skipped";
   answer_text: string;
-};
-
-export type Observation = {
-  id: string;
-  level: number;
-  evidence_start: number;
-  evidence_end: number;
-  quoted_text: string;
-  confidence: number;
-  gaps: string[];
-  validity: string;
 };
 
 export type RubricObservation = {
@@ -290,8 +333,18 @@ export type ModelSettingsResponse = {
   max_tokens: number;
   timeout_seconds: number;
   assessment_batch_size: number;
+  followup_enabled: boolean;
+  practice_feedback_enabled: boolean;
+  persona: string;
+  pricing: ModelPrice[];
   api_key_configured: boolean;
   updated_at: string | null;
+};
+
+export type ModelPrice = {
+  model_name: string;
+  input_price_per_million_cny: string;
+  output_price_per_million_cny: string;
 };
 
 export type ModelSettingsUpdate = {
@@ -304,6 +357,10 @@ export type ModelSettingsUpdate = {
   max_tokens: number;
   timeout_seconds: number;
   assessment_batch_size: number;
+  followup_enabled: boolean;
+  practice_feedback_enabled: boolean;
+  persona: "gentle" | "standard" | "pressure";
+  pricing: ModelPrice[];
 };
 
 export type ModelConnectionTestResponse = {
@@ -315,8 +372,11 @@ export type ModelConnectionTestResponse = {
 };
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  status: number;
+
+  constructor(status: number, message: string) {
     super(message);
+    this.status = status;
     this.name = "ApiError";
   }
 }
@@ -340,6 +400,18 @@ export function parseSseBlock(block: string): ParsedSseBlock | null {
   return { event, data: JSON.parse(dataLines.join("\n")) };
 }
 
+function formatErrorDetail(detail: unknown, status: number): string {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const first = detail[0] as { msg?: string; loc?: unknown[] } | undefined;
+    if (first?.msg) {
+      const where = Array.isArray(first.loc) ? first.loc.slice(1).join(".") : "";
+      return where ? `${where}: ${first.msg}` : first.msg;
+    }
+  }
+  return `请求失败（${status}）`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -355,9 +427,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, "暂时无法连接面试服务，请确认后端运行在 http://localhost:8010。");
   }
 
-  const body = (await response.json().catch(() => ({}))) as { detail?: string };
+  const body = (await response.json().catch(() => ({}))) as { detail?: unknown };
   if (!response.ok) {
-    throw new ApiError(response.status, body.detail ?? `请求失败（${response.status}）`);
+    throw new ApiError(response.status, formatErrorDetail(body.detail, response.status));
   }
   return body as T;
 }
@@ -471,8 +543,11 @@ export function createProfile(input: {
   return request<ProfileResponse>("/api/profile", { method: "POST", body: JSON.stringify(input) });
 }
 
-export function createSession(profileId: string) {
-  return request<SessionResponse>("/api/sessions", { method: "POST", body: JSON.stringify({ profile_id: profileId }) });
+export function createSession(profileId: string, mode: "classic" | "dialog" = "dialog") {
+  return request<SessionResponse>("/api/sessions", {
+    method: "POST",
+    body: JSON.stringify({ profile_id: profileId, mode }),
+  });
 }
 
 export function getSession(sessionId: string) {
@@ -482,11 +557,35 @@ export function getSession(sessionId: string) {
 export function submitAnswer(sessionId: string, input: AnswerInput) {
   return request<{
     answer: Record<string, string>;
-    observation: Observation | null;
     assessment: AssessmentResult | null;
   }>(
     `/api/sessions/${sessionId}/answers`,
     { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export function decideFollowup(sessionId: string, questionId: string) {
+  return request<{ followup: FollowupView | null }>(
+    `/api/sessions/${sessionId}/questions/${questionId}/followup/decide`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function submitFollowupAnswer(
+  sessionId: string,
+  questionId: string,
+  input: { client_submission_id: string; answer_text: string },
+) {
+  return request<{ followup: FollowupView }>(
+    `/api/sessions/${sessionId}/questions/${questionId}/followup/answer`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export function fetchQuestionFeedback(sessionId: string, questionId: string) {
+  return request<{ feedback: { question_id: string; content: string; focus_hints: string[] } | null }>(
+    `/api/sessions/${sessionId}/questions/${questionId}/feedback`,
+    { method: "POST", body: JSON.stringify({}) },
   );
 }
 
@@ -517,6 +616,20 @@ export type Report = {
     level: number;
     confidence: number;
     evidence: string;
+    commentary?: string;
+    followup_question?: string;
+    followup_answer?: string;
+  }>;
+  transcript?: Array<{
+    order: number;
+    category: string;
+    prompt: string;
+    knowledge_point_id: string;
+    status: string;
+    answer_text: string;
+    followups: Array<{ question_text: string; answer_text: string }>;
+    level: number | null;
+    commentary: string;
   }>;
 };
 
@@ -550,22 +663,36 @@ export function updateRecommendationStatus(
   });
 }
 
+export function startOpenDrill(skillId?: string) {
+  return request<{ session_id: string; session_kind: string }>(
+    "/api/practice/drill",
+    { method: "POST", body: JSON.stringify({ skill_id: skillId || null }) },
+  );
+}
+
+export function startDrill(recommendationId: string) {
+  return request<{ session_id: string; session_kind: string }>(
+    `/api/recommendations/${recommendationId}/drill`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function startVerification(recommendationId: string) {
+  return request<{ session_id: string; session_kind: string }>(
+    `/api/recommendations/${recommendationId}/verify`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
 export function getModelSettings() {
   return request<ModelSettingsResponse>("/api/settings/model");
 }
 
 export function updateModelSettings(input: ModelSettingsUpdate) {
-  const body: Record<string, string | number | boolean> = {
-    base_url: input.base_url,
-    model: input.model,
-    assessment_model: input.assessment_model,
-    clear_api_key: input.clear_api_key,
-    temperature: input.temperature,
-    max_tokens: input.max_tokens,
-    timeout_seconds: input.timeout_seconds,
-    assessment_batch_size: input.assessment_batch_size,
+  const body = {
+    ...input,
+    api_key: input.api_key?.trim() || undefined,
   };
-  if (input.api_key?.trim()) body.api_key = input.api_key.trim();
   return request<ModelSettingsResponse>("/api/settings/model", {
     method: "PUT",
     body: JSON.stringify(body),
@@ -577,4 +704,144 @@ export function testModelConnection() {
     method: "POST",
     body: JSON.stringify({}),
   });
+}
+
+export type SkillSummary = {
+  skill_id: string;
+  name: string;
+  category: string;
+  level: number | null;
+  sample_count: number;
+  studied: boolean;
+  has_deep_dive: boolean;
+};
+
+export type SkillDetail = {
+  skill_id: string;
+  name: string;
+  category: string;
+  sections: {
+    definition?: string;
+    why?: string;
+    key_points?: string[];
+    pitfalls?: string[];
+    examples?: Array<{ level: number; answer: string }>;
+    deep_dive?: { mechanism: string; personal_focus: string; pitfalls_extra: string[] };
+  };
+  has_deep_dive: boolean;
+  mastery: { level: number | null; sample_count: number; trend: string; confidence?: number; last_assessed_at?: string | null; session_ordinal?: number | null };
+  studied: boolean;
+  related_questions: Array<{ prompt: string; template_id: string }>;
+  community_questions: Array<{ id: string; text: string; dup_count: number }>;
+  recent_answer: { answer_text: string; commentary: string | null } | null;
+};
+
+export function getSkills() {
+  return request<{ skills: SkillSummary[] }>("/api/skills");
+}
+
+export function getSkillDetail(skillId: string) {
+  return request<SkillDetail>(`/api/skills/${encodeURIComponent(skillId)}`);
+}
+
+export function markSkillStudied(skillId: string) {
+  return request<{ skill_id: string; studied: boolean }>(
+    `/api/skills/${encodeURIComponent(skillId)}/study`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function generateSkillWiki(skillId: string) {
+  return request<{ skill_id: string; deep_dive: { mechanism: string; personal_focus: string; pitfalls_extra: string[] } }>(
+    `/api/skills/${encodeURIComponent(skillId)}/wiki/generate`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function submitDialogAnswer(sessionId: string, text: string) {
+  return request<{ stage: string }>(
+    `/api/sessions/${sessionId}/dialog/answer`,
+    { method: "POST", body: JSON.stringify({ text }) },
+  );
+}
+
+export function finishDialog(sessionId: string) {
+  return request<{ stage: string }>(
+    `/api/sessions/${sessionId}/dialog/finish`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function skipWrapUp(sessionId: string) {
+  return request<{ stage: string }>(
+    `/api/sessions/${sessionId}/wrapup/skip`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function setTargetDate(profileId: string, date: string | null) {
+  return request<{ target_date: string | null }>(
+    `/api/profiles/${encodeURIComponent(profileId)}/target-date`,
+    { method: "PUT", body: JSON.stringify({ date }) },
+  );
+}
+
+export interface CommunityQuestion {
+  id: string;
+  text: string;
+  phase: string;
+  knowledge_point: string;
+  knowledge_point_label: string;
+  linked_skill_id: string | null;
+  note_url: string;
+  dup_count: number;
+}
+
+export interface CommunityQuestionFacet {
+  value: string;
+  count: number;
+}
+
+export interface CommunityQuestionList {
+  total: number;
+  questions: CommunityQuestion[];
+  phases: CommunityQuestionFacet[];
+  knowledge_points: CommunityQuestionFacet[];
+}
+
+export function getCommunityQuestions(params?: {
+  phase?: string;
+  knowledgePoint?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const search = new URLSearchParams();
+  if (params?.phase) search.set("phase", params.phase);
+  if (params?.knowledgePoint) search.set("knowledge_point", params.knowledgePoint);
+  if (params?.limit != null) search.set("limit", String(params.limit));
+  if (params?.offset != null) search.set("offset", String(params.offset));
+  const query = search.toString();
+  return request<CommunityQuestionList>(`/api/community-questions${query ? `?${query}` : ""}`);
+}
+
+export function createCommunityQuestion(payload: {
+  text: string;
+  phase: string;
+  knowledgePoint: string;
+}) {
+  return request<CommunityQuestion>("/api/community-questions", {
+    method: "POST",
+    body: JSON.stringify({
+      text: payload.text,
+      phase: payload.phase,
+      knowledge_point: payload.knowledgePoint,
+    }),
+  });
+}
+
+export function deleteCommunityQuestion(id: string) {
+  return request<{ deleted: string }>(
+    `/api/community-questions/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
 }

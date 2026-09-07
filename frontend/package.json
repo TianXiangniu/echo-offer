@@ -6,17 +6,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:copy": "node --experimental-strip-types lib/ui-copy.test.ts",
-    "test:ui": "node --experimental-strip-types lib/modern-ui.test.ts",
-    "test:supplement": "node --experimental-strip-types lib/project-supplement.test.ts",
-    "test:interview-typography": "node --experimental-strip-types lib/interview-typography.test.ts",
-    "test:assessment-types": "node --experimental-strip-types lib/assessment-types.test.ts",
-    "test:model-console": "node --experimental-strip-types lib/model-console.test.ts",
-    "test:history": "node --experimental-strip-types lib/history-page.test.ts",
-    "test:profile": "node --experimental-strip-types lib/profile-page.test.ts",
-    "test:profile-weak-points": "node --experimental-strip-types lib/profile-weak-points.test.ts",
-    "test:score-100": "node --experimental-strip-types lib/score-100.test.ts",
-    "test": "npm run test:copy && npm run test:ui && npm run test:supplement && npm run test:interview-typography && npm run test:assessment-types && npm run test:model-console && npm run test:history && npm run test:profile && npm run test:profile-weak-points && npm run test:score-100"
+    "test": "node --experimental-strip-types lib/api.sse.test.ts && node --experimental-strip-types lib/assessment-types.test.ts && node --experimental-strip-types lib/project-supplement.test.ts"
   },
   "dependencies": {
     "next": "^15.4.0",

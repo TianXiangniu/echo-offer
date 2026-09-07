@@ -23,6 +23,10 @@ const DEFAULT_FORM: ModelSettingsForm = {
   max_tokens: 3200,
   timeout_seconds: 90,
   assessment_batch_size: 3,
+  followup_enabled: true,
+  practice_feedback_enabled: true,
+  persona: "standard" as const,
+  pricing: [],
 };
 
 function settingsToForm(settings: ModelSettingsResponse): ModelSettingsForm {
@@ -36,6 +40,10 @@ function settingsToForm(settings: ModelSettingsResponse): ModelSettingsForm {
     max_tokens: settings.max_tokens,
     timeout_seconds: settings.timeout_seconds,
     assessment_batch_size: settings.assessment_batch_size,
+    followup_enabled: settings.followup_enabled,
+    practice_feedback_enabled: settings.practice_feedback_enabled,
+    persona: (settings.persona as ModelSettingsForm["persona"]) ?? "standard",
+    pricing: settings.pricing ?? [],
   };
 }
 
@@ -209,6 +217,19 @@ export default function ModelConsolePage() {
                   <input type="checkbox" checked={form.clear_api_key} onChange={(event) => setField("clear_api_key", event.target.checked)} />
                   <span>清除已保存的 API Key</span>
                 </label>
+                <div className="mint-field mint-field--wide">
+                  <span className="mint-field-label">模型价格（元 / 1M Token）</span>
+                  {(form.pricing ?? []).map((price, index) => (
+                    <div className="mint-input-with-unit" key={`${price.model_name}-${index}`}>
+                      <input className="mint-input" value={price.model_name} placeholder="模型名" onChange={(event) => setField("pricing", form.pricing.map((item, itemIndex) => itemIndex === index ? { ...item, model_name: event.target.value } : item))} />
+                      <input className="mint-input" type="number" min="0" step="0.0001" value={price.input_price_per_million_cny} placeholder="输入" onChange={(event) => setField("pricing", form.pricing.map((item, itemIndex) => itemIndex === index ? { ...item, input_price_per_million_cny: event.target.value } : item))} />
+                      <input className="mint-input" type="number" min="0" step="0.0001" value={price.output_price_per_million_cny} placeholder="输出" onChange={(event) => setField("pricing", form.pricing.map((item, itemIndex) => itemIndex === index ? { ...item, output_price_per_million_cny: event.target.value } : item))} />
+                      <button className="mint-button mint-button--quiet" type="button" onClick={() => setField("pricing", form.pricing.filter((_, itemIndex) => itemIndex !== index))}>移除</button>
+                    </div>
+                  ))}
+                  <button className="mint-button mint-button--outline" type="button" onClick={() => setField("pricing", [...form.pricing, { model_name: form.model, input_price_per_million_cny: "", output_price_per_million_cny: "" }])}>添加模型价格</button>
+                  <span className="mint-field-help">输入与输出分别填写，未配置价格的调用只统计 Token，不估算费用。</span>
+                </div>
               </div>
             </section>
 
@@ -240,6 +261,23 @@ export default function ModelConsolePage() {
                   <span className="mint-field-label">每批评分题目数量</span>
                   <input className="mint-input" type="number" min="1" max="5" step="1" value={form.assessment_batch_size} onChange={(event) => setField("assessment_batch_size", Number(event.target.value))} required />
                   <span className="mint-field-help">整场面试结束后，按批次调用评分模型。</span>
+                </label>
+                <label className="mint-field">
+                  <span className="mint-field-label">面试官风格</span>
+                  <select className="mint-input" value={form.persona} onChange={(event) => setField("persona", event.target.value as ModelSettingsForm["persona"])}>
+                    <option value="gentle">温和——多鼓励</option>
+                    <option value="standard">标准——贴近真实面试</option>
+                    <option value="pressure">压力——抓矛盾、紧逼追问</option>
+                  </select>
+                  <span className="mint-field-help">只影响追问和练习反馈的语气，不影响评分。</span>
+                </label>
+                <label className="mint-checkbox">
+                  <input type="checkbox" checked={form.followup_enabled} onChange={(event) => setField("followup_enabled", event.target.checked)} />
+                  <span>开启面试官追问（关闭后不调用模型）</span>
+                </label>
+                <label className="mint-checkbox">
+                  <input type="checkbox" checked={form.practice_feedback_enabled} onChange={(event) => setField("practice_feedback_enabled", event.target.checked)} />
+                  <span>开启逐题练习反馈（关闭后不调用模型）</span>
                 </label>
               </div>
             </section>

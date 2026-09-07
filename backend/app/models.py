@@ -1,11 +1,17 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def ensure_utc(value: datetime) -> datetime:
+    """SQLite 读回的 DateTime 无时区；统一按 UTC 处理。"""
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 class Base(DeclarativeBase):
@@ -34,6 +40,10 @@ class ModelSetting(Base):
     max_tokens: Mapped[int] = mapped_column(Integer)
     timeout_seconds: Mapped[float] = mapped_column()
     assessment_batch_size: Mapped[int] = mapped_column(Integer)
+    followup_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    practice_feedback_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    persona: Mapped[str] = mapped_column(String(20), default="standard")
+    pricing_json: Mapped[str] = mapped_column(Text, default="[]")
     api_key: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -129,6 +139,8 @@ class InterviewTarget(Base):
     company_type: Mapped[str] = mapped_column(String(40), default="unspecified")
     target_title: Mapped[str] = mapped_column(String(120), default="Agent 应用工程师")
     jd_text: Mapped[str] = mapped_column(Text, default="")
+    # 目标面试日期：画像倒排训练计划用
+    target_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class InterviewSession(Base):
@@ -141,6 +153,16 @@ class InterviewSession(Base):
     status: Mapped[str] = mapped_column(String(30), default="in_progress")
     current_question_index: Mapped[int] = mapped_column(Integer, default=0)
     total_questions: Mapped[int] = mapped_column(Integer, default=8)
+    followup_budget_used: Mapped[int] = mapped_column(Integer, default=0)
+    session_kind: Mapped[str] = mapped_column(String(20), default="interview")
+    # SQLite 无法 ALTER 添加外键，关联语义由应用层维护（指向 learning_recommendations.id）
+    source_recommendation_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
+    # 对话式面试：mode=dialog 走 intro→深挖→knowledge→wrap_up 流程；classic 为既有流程
+    mode: Mapped[str] = mapped_column(String(20), default="classic")
+    stage: Mapped[str] = mapped_column(String(20), default="knowledge")
+    dialog_rounds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     workflow_version: Mapped[str] = mapped_column(String(40), default="alpha-local-v1")
     session_version: Mapped[int] = mapped_column(Integer, default=1)
     profile_id: Mapped[str | None] = mapped_column(
@@ -168,9 +190,67 @@ class InterviewQuestion(Base):
     is_anchor: Mapped[bool] = mapped_column(Boolean, default=False)
     prompt: Mapped[str] = mapped_column(Text)
     knowledge_point_id: Mapped[str] = mapped_column(String(120))
+    template_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     rubric_version: Mapped[str] = mapped_column(String(60))
     signals_json: Mapped[str] = mapped_column(Text)
     rubric_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class InterviewFollowup(Base):
+    __tablename__ = "interview_followups"
+    __table_args__ = (
+        UniqueConstraint("question_id", "round", name="uq_followup_question_round"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("interview_sessions.id"), index=True)
+    question_id: Mapped[str] = mapped_column(ForeignKey("interview_questions.id"), index=True)
+    round: Mapped[int] = mapped_column(Integer, default=1)
+    question_text: Mapped[str] = mapped_column(Text, default="")
+    decision_reason: Mapped[str] = mapped_column(String(30), default="probe")
+    client_submission_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answer_text_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class QuestionFeedback(Base):
+    """逐题练习反馈。与盲评分严格隔离：评分链路不读取本表。"""
+
+    __tablename__ = "question_feedbacks"
+    __table_args__ = (
+        UniqueConstraint("question_id", name="uq_question_feedback"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("interview_sessions.id"), index=True)
+    question_id: Mapped[str] = mapped_column(ForeignKey("interview_questions.id"), index=True)
+    content: Mapped[str] = mapped_column(Text, default="")
+    focus_hints_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ProjectDialog(Base):
+    """对话式面试的消息流：面试官的话与候选人的回答逐条落库。"""
+
+    __tablename__ = "project_dialogs"
+    __table_args__ = (
+        UniqueConstraint("session_id", "turn_no", "role", name="uq_dialog_turn_role"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("interview_sessions.id"), index=True
+    )
+    turn_no: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(20))  # interviewer | candidate
+    content: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(30), default="dialog")
+    heuristic_tag: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class AnswerAttempt(Base):
@@ -225,6 +305,7 @@ class AssessmentRun(Base):
     aggregate_confidence: Mapped[float | None] = mapped_column(nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     error_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    commentary: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt_number: Mapped[int] = mapped_column(Integer, default=1)
     batch_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
     assessment_batch_id: Mapped[str | None] = mapped_column(
@@ -321,6 +402,36 @@ class OperationJobEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class LlmCallTrace(Base):
+    __tablename__ = "llm_call_traces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    trace_id: Mapped[str] = mapped_column(String(36), index=True)
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("interview_sessions.id"), index=True, nullable=True
+    )
+    operation_job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("operation_jobs.id"), index=True, nullable=True
+    )
+    call_kind: Mapped[str] = mapped_column(String(40), index=True)
+    provider: Mapped[str] = mapped_column(String(80))
+    model_name: Mapped[str] = mapped_column(String(160), index=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_price_per_million_cny: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    output_price_per_million_cny: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    cost_cny: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    request_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+
+
 class EvidenceSpan(Base):
     __tablename__ = "evidence_spans"
 
@@ -365,6 +476,37 @@ class SkillCatalog(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SkillWiki(Base):
+    """知识点讲解页。content_json 结构化存储各区块，深讲按需生成后覆盖写回。"""
+
+    __tablename__ = "skill_wikis"
+
+    skill_id: Mapped[str] = mapped_column(
+        ForeignKey("skill_catalog.id"), primary_key=True
+    )
+    content_json: Mapped[str] = mapped_column(Text, default="{}")
+    has_deep_dive: Mapped[bool] = mapped_column(Boolean, default=False)
+    source: Mapped[str] = mapped_column(String(20), default="preset")
+    model_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class SkillStudyLog(Base):
+    """学习流水：只记"学过"，掌握度仍由评分驱动（学过≠会了）。"""
+
+    __tablename__ = "skill_study_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    skill_id: Mapped[str] = mapped_column(ForeignKey("skill_catalog.id"), index=True)
+    source: Mapped[str] = mapped_column(String(30), default="manual")
+    studied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class QuestionSkill(Base):
@@ -460,6 +602,29 @@ class LearningRecommendation(Base):
     actions_json: Mapped[str] = mapped_column(Text, default="[]")
     success_criteria_json: Mapped[str] = mapped_column(Text, default="[]")
     recommended_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    practice_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="recommended", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class CommunityQuestion(Base):
+    """社区题库：从面经帖抽取的真实面试题。
+
+    knowledge_point_slug 暂存字符串、不建外键，待与知识库知识点体系联动时再升级。
+    """
+
+    __tablename__ = "community_questions"
+    __table_args__ = (
+        UniqueConstraint("content_hash", name="uq_community_question_content"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    text: Mapped[str] = mapped_column(Text)
+    phase: Mapped[str] = mapped_column(String(20), index=True)
+    knowledge_point_slug: Mapped[str] = mapped_column(String(120), index=True)
+    note_url: Mapped[str] = mapped_column(Text, default="")
+    note_id: Mapped[str] = mapped_column(String(80), index=True)
+    dup_count: Mapped[int] = mapped_column(Integer, default=1)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

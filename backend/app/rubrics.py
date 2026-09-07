@@ -16,26 +16,40 @@ class RubricItem:
 class RubricSnapshot:
     version: str
     items: tuple[RubricItem, ...]
+    reference_facts: tuple[str, ...] = ()
+
+
+DEFAULT_CRITERIA: tuple[tuple[str, str], ...] = (
+    ("correctness", "核心概念、方案或判断是否正确；概念错误、因果颠倒或编造机制应给低分"),
+    ("mechanism", "是否解释了机制或原理——说清为什么这样工作，而不是罗列名词"),
+    ("scenario", "是否结合具体场景、数据或实例分析；有真实细节而非泛泛而谈"),
+    ("engineering", "是否说明边界条件、代价取舍、失败处理或可落地的执行方案"),
+)
 
 
 def build_rubric(question: QuestionSpec) -> RubricSnapshot:
-    snapshot = getattr(question, "rubric_snapshot", None)
-    if isinstance(snapshot, RubricSnapshot):
-        return snapshot
+    if isinstance(question.rubric_snapshot, RubricSnapshot):
+        return question.rubric_snapshot
+    weights = dict(question.rubric_weights)
+    overrides = dict(question.criteria_override)
     return RubricSnapshot(
         version=question.rubric_version,
-        items=(
-            RubricItem("correctness", "核心概念、方案或判断是否正确"),
-            RubricItem("mechanism", "是否解释机制、原因或工作原理"),
-            RubricItem("scenario", "是否结合当前问题进行场景化分析"),
-            RubricItem("engineering", "是否说明边界、取舍、故障或可执行方案"),
+        items=tuple(
+            RubricItem(
+                rubric_id,
+                overrides.get(rubric_id, criterion),
+                weight=weights.get(rubric_id, 1.0),
+            )
+            for rubric_id, criterion in DEFAULT_CRITERIA
         ),
+        reference_facts=question.reference_facts,
     )
 
 
 def rubric_to_dict(rubric: RubricSnapshot) -> dict[str, Any]:
     return {
         "version": rubric.version,
+        "reference_facts": list(rubric.reference_facts),
         "items": [
             {
                 "rubric_id": item.rubric_id,
@@ -63,4 +77,8 @@ def rubric_from_dict(payload: dict[str, Any]) -> RubricSnapshot:
     )
     if not items or any(not item.rubric_id or not item.criterion for item in items):
         raise ValueError("invalid rubric items")
-    return RubricSnapshot(version=payload["version"], items=items)
+    return RubricSnapshot(
+        version=payload["version"],
+        items=items,
+        reference_facts=tuple(payload.get("reference_facts", []) or []),
+    )

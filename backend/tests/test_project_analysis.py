@@ -11,10 +11,10 @@ from sqlalchemy import select
 from app.models import Resume, ResumeProject, ResumeProjectAnalysis, ResumeProjectQuestion
 from app.config import MODEL_MAX_TOKENS
 import app.project_analysis as project_analysis
-from app.project_analysis import clean_model_json, parse_model_analysis, validate_analysis_evidence
+from app.project_analysis import parse_model_analysis, validate_analysis_evidence
 from app.providers import ProjectAnalysisProviderError, SiliconFlowProjectAnalysisProvider
 from app.schemas import AgentProjectAnalysisResponse
-from app.services import stream_resume_project_analysis
+from app.resume_intake import stream_resume_project_analysis
 
 
 def make_pdf_bytes():
@@ -71,13 +71,16 @@ def valid_analysis_payload():
 def test_build_user_prompt_covers_rich_project_analysis_contract():
     prompt = project_analysis.build_user_prompt("负责检索链路和线上监控")
 
-    assert "project_name、background_goal、tech_stack、responsibilities、" in prompt
+    # 新版 prompt 用 JSON 骨架表达输出结构
+    assert '"project_name"' in prompt and '"quantified_results"' in prompt
+    assert '"followup_if_incomplete"' in prompt and '"expected_answer_points"' in prompt
+    assert '"difficulty"' in prompt and '"source_type"' in prompt
     assert "ownership" in prompt
-    assert "boundary" in prompt or "职责边界" in prompt
+    assert "boundary" in prompt or "职责" in prompt
     assert "scale" in prompt or "规模" in prompt
     assert "tradeoff" in prompt or "取舍" in prompt
     assert "evaluation" in prompt or "评估" in prompt
-    assert "unknown" in prompt or "未知信息" in prompt
+    assert '"missing_information"' in prompt
     assert "fact" in prompt or "事实" in prompt
     assert "status" in prompt or "状态" in prompt
     assert "三道" in prompt or "three" in prompt
@@ -223,12 +226,6 @@ def test_analysis_response_allows_missing_quantified_result():
 
     assert result.project.quantified_results == ""
     assert result.questions[0].knowledge_point_id.startswith("project.")
-
-
-def test_clean_model_json_removes_markdown_fence():
-    fence = chr(96) * 3
-
-    assert clean_model_json(fence + "json\n{\"ok\": true}\n" + fence) == '{"ok": true}'
 
 
 def test_normalizes_rich_project_fields_and_fact_statuses():

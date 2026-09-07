@@ -296,3 +296,59 @@ def test_update_candidate_profile_ignores_invalid_runs_and_hides_archived_source
     assert recommendation["source_question"] == question.prompt
     assert recommendation["source_answer_excerpt"] is not None
     assert recommendation["source_level"] is not None
+
+
+def test_drill_samples_cannot_grind_level_up_but_verification_can():
+    from app.profile_engine import SkillSample, aggregate_skill_samples
+
+    now = datetime.now(timezone.utc)
+
+    # 初始：一次正式面试 2 分。之后连刷 3 次 drill 全 4 分。
+    drills = [
+        SkillSample(
+            level=4,
+            confidence=0.9,
+            assessed_at=now - timedelta(days=1 + index),
+            weight=0.5,
+        )
+        for index in range(3)
+    ]
+    grinded = aggregate_skill_samples(
+        [SkillSample(level=2, confidence=0.9, assessed_at=now, weight=1.0), *drills]
+    )
+    assert grinded.current_level < 4
+
+    # 一次 verification 4 分（权重 1.2）应显著抬升等级
+    verified = aggregate_skill_samples(
+        [
+            SkillSample(level=4, confidence=0.9, assessed_at=now, weight=1.2),
+            SkillSample(level=2, confidence=0.9, assessed_at=now - timedelta(days=5), weight=1.0),
+        ]
+    )
+    assert verified.current_level >= 3
+
+
+def test_summary_contains_hard_data(ai_client):
+    from tests.conftest import create_test_session
+
+    def submit(client, session_id, questions, prefix):
+        for index, question in enumerate(questions, start=1):
+            client.post(
+                f"/api/sessions/{session_id}/answers",
+                json={
+                    "question_id": question["id"],
+                    "client_submission_id": f"{prefix}-{index}",
+                    "status": "submitted",
+                    "answer_text": f"第 {index} 题：机制、边界、取舍都讲清楚。",
+                },
+            )
+
+    session_id, questions = create_test_session(ai_client)
+    submit(ai_client, session_id, questions, "sum")
+    ai_client.post(f"/api/sessions/{session_id}/assessment")
+    with ai_client.app.state.session_factory() as db:
+        from app.models import InterviewSession as IS
+
+        profile_id = db.get(IS, session_id).profile_id
+    body = ai_client.get(f"/api/profiles/{profile_id}/summary").json()
+    assert "已积累" in body["summary"] and "次有效回答" in body["summary"]

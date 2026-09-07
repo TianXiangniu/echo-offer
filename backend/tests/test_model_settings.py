@@ -136,3 +136,21 @@ def test_model_settings_reject_values_outside_supported_ranges(field, value):
 
     with pytest.raises(ValueError):
         validate_model_settings(ModelSettingsValues(**values))
+
+
+def test_model_settings_save_and_return_rmb_model_prices(tmp_path):
+    _, session_factory = create_database(f"sqlite:///{tmp_path / 'settings.db'}")
+    payload = ModelSettingsUpdate(
+        base_url="https://example.test/v1", model="test-model", assessment_model="judge-model",
+        temperature=0.1, max_tokens=2400, timeout_seconds=90, assessment_batch_size=3,
+        pricing=[
+            {"model_name": "judge-model", "input_price_per_million_cny": "3.2", "output_price_per_million_cny": "9.8"},
+            {"model_name": "test-model", "input_price_per_million_cny": "1", "output_price_per_million_cny": "2"},
+        ],
+    )
+    with session_factory() as db:
+        settings = save_model_settings(db, payload)
+        db.commit()
+
+    assert [price.model_name for price in settings.pricing] == ["judge-model", "test-model"]
+    assert public_model_settings(settings)["pricing"][0]["input_price_per_million_cny"] == "3.2"

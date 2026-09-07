@@ -27,6 +27,10 @@ from .models import (
 )
 
 
+# 练习不等于会了：drill 样本降权，隔了几天还能答出来的 verification 升权。
+SAMPLE_KIND_WEIGHTS = {"interview": 1.0, "drill": 0.5, "verification": 1.2}
+
+
 @dataclass(frozen=True, slots=True)
 class SkillSample:
     level: int
@@ -34,6 +38,7 @@ class SkillSample:
     assessed_at: datetime
     serious_error: bool = False
     session_id: str | None = None
+    weight: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +79,10 @@ def aggregate_skill_samples(
         return AggregatedSkill(0, 0.0, 0, "insufficient_data", 0)
 
     # A recent observation counts more, but older observations remain visible.
-    weights = [max(1, 5 - index) for index, _ in enumerate(ordered[:5])]
+    weights = [
+        max(1, 5 - index) * max(0.1, item.weight)
+        for index, item in enumerate(ordered[:5])
+    ]
     selected = ordered[:5]
     total_weight = sum(weights)
     weighted_level = sum(item.level * weight for item, weight in zip(selected, weights)) / total_weight
@@ -383,6 +391,7 @@ def update_candidate_profile(
                     assessed_at=assessed_at,
                     serious_error=any(item.serious_error for item in question_samples),
                     session_id=candidate_session.id,
+                    weight=SAMPLE_KIND_WEIGHTS.get(candidate_session.session_kind, 1.0),
                 )
             )
 
@@ -453,11 +462,37 @@ def update_candidate_profile(
         recommendation.profile_snapshot_id = snapshot.id
         db.add(recommendation)
     high_priority = [item for item in recommendations if item.priority == "high"]
+    states = list(
+        db.scalars(
+            select(CandidateKnowledgeState).where(
+                CandidateKnowledgeState.profile_id == profile.id
+            )
+        )
+    )
+    total_samples = sum(state.valid_sample_count for state in states)
     if high_priority:
         names = [db.get(SkillCatalog, item.skill_id).canonical_name for item in high_priority]
-        profile.summary = f"当前最需要加强：{'、'.join(names[:3])}。建议先完成高优先级方向的练习，再进行下一次面试。"
+        profile.summary = (
+            f"已积累 {total_samples} 次有效回答。当前最需要加强：{'、'.join(names[:3])}——"
+            "先回看对应题目的完整回答，再用专项练习补上，过几天验证一次。"
+        )
+    elif states:
+        strongest = max(states, key=lambda s: (s.current_level, s.confidence))
+        strongest_name = db.get(SkillCatalog, strongest.skill_id).canonical_name
+        weakest = min(states, key=lambda s: (s.current_level, -s.confidence))
+        weakest_name = db.get(SkillCatalog, weakest.skill_id).canonical_name
+        if strongest.current_level == weakest.current_level:
+            profile.summary = (
+                f"已积累 {total_samples} 次有效回答，各方向水平接近（当前 {weakest.current_level} / 4）。"
+                "继续保持练习频率，样本越多判断越准。"
+            )
+        else:
+            profile.summary = (
+                f"已积累 {total_samples} 次有效回答。最稳的是{strongest_name}（{strongest.current_level} / 4），"
+                f"相对薄弱的是{weakest_name}（{weakest.current_level} / 4）——薄弱方向练一次并延迟验证，可以更快拉平。"
+            )
     else:
-        profile.summary = "目前没有需要立即补齐的高优先级方向。继续积累面试记录，可以让判断更稳定。"
+        profile.summary = "还没有足够的面试记录。完成一场面试后，这里会开始记录你的能力变化。"
     profile.updated_at = datetime.now(timezone.utc)
     if commit:
         db.commit()

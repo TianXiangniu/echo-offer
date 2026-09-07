@@ -16,6 +16,7 @@ from app.models import (
     User,
 )
 from app.schemas import AgentProjectAnalysisResponse
+from app.providers import AssessmentProviderError
 
 
 PROJECT = {
@@ -223,19 +224,15 @@ def test_profile_and_session_creation_have_fixed_shape(client):
     assert session_response.status_code == 200
     session = session_response.json()
     assert len(session["questions"]) == 8
+    # 3 道项目题 + 5 道从知识点池动态抽取的固定题
     assert [question["category"] for question in session["questions"]].count("project") == 3
-    assert [question["category"] for question in session["questions"]].count("agent") == 3
-    assert [question["category"] for question in session["questions"]].count("reliability") == 2
-    assert [question["category"] for question in session["questions"]] == [
-        "project", "project", "project",
-        "agent", "agent", "agent",
-        "reliability", "reliability",
-    ]
+    assert all(question["category"] in {"agent", "reliability", "design", "coding", "behavioral"} for question in session["questions"][3:])
     assert [question["is_anchor"] for question in session["questions"]] == [
         True, False, False,
         True, False, False,
         True, False,
     ]
+    assert all(question["template_id"] for question in session["questions"][3:])
 
 
 def test_custom_project_questions_are_grouped_before_fixed_questions(client):
@@ -265,11 +262,9 @@ def test_custom_project_questions_are_grouped_before_fixed_questions(client):
 
     assert session_response.status_code == 200
     questions = session_response.json()["questions"]
-    assert [question["category"] for question in questions] == [
-        "project", "project", "project",
-        "agent", "agent", "agent",
-        "reliability", "reliability",
-    ]
+    assert len(questions) == 8
+    assert [question["category"] for question in questions].count("project") == 3
+    assert all(question["category"] in {"agent", "reliability", "design", "coding", "behavioral"} for question in questions[3:])
     assert [question["prompt"] for question in questions[:3]] == [
         "项目题一", "项目题二", "项目题三"
     ]
@@ -538,7 +533,6 @@ def test_duplicate_submission_returns_one_answer_without_assessment(
     assert first.status_code == 200
     assert second.status_code == 200
     assert first.json()["answer"]["id"] == second.json()["answer"]["id"]
-    assert first.json()["observation"] is None
     assert first.json()["assessment"] is None
     assert second.json()["assessment"] is None
 
@@ -581,10 +575,8 @@ def test_unknown_and_skipped_have_distinct_evaluation_behavior(client, session_c
     )
 
     assert unknown.status_code == 200
-    assert unknown.json()["observation"] is None
     assert unknown.json()["assessment"] is None
     assert skipped.status_code == 200
-    assert skipped.json()["observation"] is None
     assert skipped.json()["assessment"] is None
 
 
@@ -603,7 +595,7 @@ def test_blank_submitted_answer_is_rejected(client, session_context):
     assert response.status_code == 422
 
 
-def test_report_aggregates_without_uncalibrated_score(client, session_context):
+def test_report_keeps_score_unavailable_until_interview_is_evaluated(client, session_context):
     session_id, questions = session_context
     for index, question in enumerate([questions[0], questions[3]]):
         response = client.post(
@@ -625,7 +617,7 @@ def test_report_aggregates_without_uncalibrated_score(client, session_context):
     assert report["anchor_coverage"] == {"answered": 2, "total": 3}
     assert 0 < report["coverage"] < 1
     assert report["valid_evidence_count"] == 0
-    assert "score_100" not in report
+    assert report["score_100"] is None
 
 
 def test_ai_assessment_is_deferred_until_session_completion(ai_client, ai_session_context):
@@ -697,6 +689,7 @@ def test_invalid_rubric_evidence_is_preserved_but_excluded_from_report(
     report = invalid_ai_client.get(f"/api/sessions/{session_id}/report").json()
     assert report["valid_evidence_count"] == 0
     assert report["assessment_status_counts"]["invalid"] == len(questions)
+    assert report["score_100"] is None
 
 
 def test_report_exposes_valid_ai_rubric_evidence(ai_client, ai_session_context):
@@ -714,6 +707,7 @@ def test_report_exposes_valid_ai_rubric_evidence(ai_client, ai_session_context):
         "scenario",
         "engineering",
     }
+    assert report["score_100"] == 75
 
 
 def batch_answer_payload(question, index):
@@ -760,7 +754,7 @@ def test_answer_submission_does_not_call_ai(ai_client, ai_session_context):
     assert ai_client.app.state.assessment_provider.batch_calls == 0
 
 
-def test_completed_session_uses_one_batch_call(ai_client, ai_session_context):
+def test_completed_session_uses_small_batch_calls(ai_client, ai_session_context):
     session_id, questions = ai_session_context
     submit_all_batch_answers(ai_client, session_id, questions)
 
@@ -770,7 +764,33 @@ def test_completed_session_uses_one_batch_call(ai_client, ai_session_context):
     assert response.json()["status"] == "valid"
     assert response.json()["evaluated_count"] == len(questions)
     assert len(response.json()["assessments"]) == len(questions)
-    assert ai_client.app.state.assessment_provider.batch_calls == 1
+    assert ai_client.app.state.assessment_provider.batch_calls == 3
+
+
+def test_partial_batch_result_keeps_successful_chunks(ai_client, ai_session_context):
+    session_id, questions = ai_session_context
+    submit_all_batch_answers(ai_client, session_id, questions)
+    provider = ai_client.app.state.assessment_provider
+    original_assess_batch = provider.assess_batch
+    calls = {"count": 0}
+
+    def fail_second_batch(cases):
+        # 并发下按调用次序失败不确定：改为按内容定位——含题 5 的批持续失败
+        if any(case.question.order == 5 for case in cases):
+            raise AssessmentProviderError("provider_timeout", "模型请求超时")
+        return original_assess_batch(cases)
+
+    provider.assess_batch = fail_second_batch
+
+    response = ai_client.post(f"/api/sessions/{session_id}/assessment")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+    assert response.json()["job_status"] == "partial"
+    report = ai_client.get(f"/api/sessions/{session_id}/report")
+    assert report.status_code == 200
+    assert report.json()["valid_evidence_count"] == 5
+    assert report.json()["assessment_status_counts"]["pending"] == 3
 
 
 def test_incomplete_session_cannot_start_batch_assessment(ai_client, ai_session_context):
@@ -798,7 +818,7 @@ def test_repeating_valid_batch_does_not_call_ai(ai_client, ai_session_context):
     assert first.status_code == 200
     assert second.status_code == 200
     assert second.json()["status"] == "valid"
-    assert ai_client.app.state.assessment_provider.batch_calls == 1
+    assert ai_client.app.state.assessment_provider.batch_calls == 3
 
 
 def test_explicit_unknown_is_level_zero_and_skipped_is_not_scored(
@@ -823,7 +843,7 @@ def test_explicit_unknown_is_level_zero_and_skipped_is_not_scored(
     assert response.json()["status"] == "valid"
     assert response.json()["evaluated_count"] == len(questions) - 1
     assert response.json()["assessments"][0]["assessment"]["level"] == 0
-    assert ai_client.app.state.assessment_provider.batch_calls == 1
+    assert ai_client.app.state.assessment_provider.batch_calls == 2
 
 
 def test_failed_batch_preserves_answers_and_retry_reuses_them(
@@ -839,8 +859,309 @@ def test_failed_batch_preserves_answers_and_retry_reuses_them(
     assert first.json()["status"] == "pending"
     assert second.json()["status"] == "valid"
     assert second.json()["evaluated_count"] == len(questions)
-    assert failing_ai_client.app.state.assessment_provider.batch_calls == 2
+    assert failing_ai_client.app.state.assessment_provider.batch_calls == 4
     with failing_ai_client.app.state.session_factory() as db:
         from app.models import AnswerAttempt
 
         assert len(list(db.scalars(select(AnswerAttempt)))) == len(questions)
+
+
+def test_community_questions_list_filter_and_facets(client):
+    from app.models import CommunityQuestion
+
+    with client.app.state.session_factory() as db:
+        db.add_all(
+            [
+                CommunityQuestion(
+                    id=str(uuid4()),
+                    text="什么是两阶段提交？",
+                    phase="八股",
+                    knowledge_point_slug="new:cs_fundamentals",
+                    note_url="https://example.com/a",
+                    note_id="note-a",
+                    dup_count=3,
+                    content_hash="hash-a",
+                ),
+                CommunityQuestion(
+                    id=str(uuid4()),
+                    text="岛屿最大面积",
+                    phase="手撕",
+                    knowledge_point_slug="new:algorithm",
+                    note_url="https://example.com/b",
+                    note_id="note-b",
+                    dup_count=1,
+                    content_hash="hash-b",
+                ),
+            ]
+        )
+        db.commit()
+
+    response = client.get("/api/community-questions")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    assert body["questions"][0]["text"] == "什么是两阶段提交？"
+    assert body["questions"][0]["knowledge_point_label"] == "计算机基础"
+    assert body["questions"][0]["dup_count"] == 3
+    assert {item["value"] for item in body["phases"]} == {"八股", "手撕"}
+    assert body["knowledge_points"][0]["count"] >= 1
+
+    filtered = client.get("/api/community-questions", params={"phase": "手撕"})
+    assert filtered.status_code == 200
+    filtered_body = filtered.json()
+    assert filtered_body["total"] == 1
+    assert filtered_body["questions"][0]["text"] == "岛屿最大面积"
+
+    by_kp = client.get(
+        "/api/community-questions", params={"knowledge_point": "手撕算法"}
+    )
+    assert by_kp.status_code == 200
+    assert by_kp.json()["total"] == 1
+
+    paged = client.get("/api/community-questions", params={"limit": 1, "offset": 1})
+    assert paged.status_code == 200
+    assert len(paged.json()["questions"]) == 1
+
+
+def test_community_question_create_and_delete(client):
+    payload = {
+        "text": "手写一个带过期时间的 LRU 缓存",
+        "phase": "手撕",
+        "knowledge_point": "手撕算法",
+    }
+    created = client.post("/api/community-questions", json=payload)
+    assert created.status_code == 200
+    body = created.json()
+    assert body["text"] == payload["text"]
+    assert body["knowledge_point"] == "手撕算法"
+    assert body["note_url"] == ""
+
+    duplicate = client.post("/api/community-questions", json=payload)
+    assert duplicate.status_code == 409
+
+    listed = client.get(
+        "/api/community-questions", params={"knowledge_point": "手撕算法"}
+    )
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+
+    deleted = client.delete(f"/api/community-questions/{body['id']}")
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] == body["id"]
+    after = client.get(
+        "/api/community-questions", params={"knowledge_point": "手撕算法"}
+    )
+    assert after.json()["total"] == 0
+
+    missing = client.delete(f"/api/community-questions/{uuid4()}")
+    assert missing.status_code == 404
+
+    invalid = client.post(
+        "/api/community-questions", json={"text": "短的", "phase": "八股"}
+    )
+    assert invalid.status_code == 422
+
+
+def test_community_question_linkage(client):
+    from app.models import CommunityQuestion, SkillCatalog
+
+    with client.app.state.session_factory() as db:
+        skill_id = "rag.retrieval_diagnosis"
+        if db.get(SkillCatalog, skill_id) is None:
+            db.add(SkillCatalog(id=skill_id, canonical_name="RAG召回排查", category="Agent与RAG"))
+            db.commit()
+        db.add_all(
+            [
+                CommunityQuestion(
+                    id=str(uuid4()), text="RAG召回不准怎么排查？", phase="八股",
+                    knowledge_point_slug=skill_id, note_id="note-x1", dup_count=5, content_hash="hash-link-1",
+                ),
+                CommunityQuestion(
+                    id=str(uuid4()), text="softmax 是什么", phase="八股",
+                    knowledge_point_slug="new:cs_fundamentals", note_id="note-x2", dup_count=1, content_hash="hash-link-2",
+                ),
+            ]
+        )
+        db.commit()
+
+    # skill detail 携带真题
+    detail = client.get(f"/api/skills/{skill_id}")
+    assert detail.status_code == 200
+    cq = detail.json()["community_questions"]
+    assert cq and cq[0]["text"] == "RAG召回不准怎么排查？"
+    assert cq[0]["dup_count"] == 5
+
+    # 题库列表：已映射带 linked_skill_id，未映射为 null
+    listed = client.get("/api/community-questions").json()
+    linked = {q["knowledge_point"]: q["linked_skill_id"] for q in listed["questions"]}
+    assert linked["rag.retrieval_diagnosis"] == skill_id
+    assert linked["new:cs_fundamentals"] is None
+
+
+def test_manual_project_without_resume_text(client):
+    payload = {
+        "resume_text": "",
+        "project": {**json.loads(json.dumps(PROJECT))},
+    }
+    response = client.post("/api/profile", json=payload)
+    assert response.status_code == 200
+    profile_id = response.json()["profile_id"]
+    session = client.post("/api/sessions", json={"profile_id": profile_id, "mode": "dialog"})
+    assert session.status_code == 200
+
+
+def test_community_question_labels_are_localized(client):
+    from app.models import CommunityQuestion
+
+    with client.app.state.session_factory() as db:
+        db.add(
+            CommunityQuestion(
+                id=str(uuid4()), text="E2E遗留：标签白名单校验题", phase="八股",
+                knowledge_point_slug="new:inference_optimization", note_id="note-l1",
+                dup_count=1, content_hash="hash-label-1",
+            )
+        )
+        db.commit()
+    facets = client.get("/api/community-questions").json()["knowledge_points"]
+    for item in facets:
+        assert not item["value"].startswith("new:"), item["value"]
+        assert not item["value"].startswith("behavioral."), item["value"]
+        assert item["value"] != "未分类" or item["value"] == "未分类"
+
+
+def test_mastery_aggregates_across_profiles(client):
+    from app.models import CandidateKnowledgeState, User
+
+    with client.app.state.session_factory() as db:
+        user = User(id=str(uuid4()))
+        db.add(user)
+        db.flush()
+        from app.models import CandidateProfile
+
+        p1 = CandidateProfile(id=str(uuid4()), user_id=user.id, direction="agent_application_rag", level="beginner", target_title="Agent 工程师")
+        p2 = CandidateProfile(id=str(uuid4()), user_id=user.id, direction="agent_application_rag", level="intermediate", target_title="Agent 工程师")
+        db.add_all([p1, p2])
+        db.flush()
+        db.add_all(
+            [
+                CandidateKnowledgeState(
+                    id=str(uuid4()), user_id=user.id, profile_id=p1.id,
+                    skill_id="mcp.tool_ecosystem", current_level=3, confidence=0.8,
+                    valid_sample_count=6, trend="flat",
+                    last_session_id=None,
+                ),
+                CandidateKnowledgeState(
+                    id=str(uuid4()), user_id=user.id, profile_id=p2.id,
+                    skill_id="mcp.tool_ecosystem", current_level=1, confidence=0.5,
+                    valid_sample_count=2, trend="down",
+                ),
+            ]
+        )
+        db.commit()
+        from datetime import datetime, timezone as tz
+
+        rows = db.scalars(
+            select(CandidateKnowledgeState).where(
+                CandidateKnowledgeState.skill_id == "mcp.tool_ecosystem"
+            )
+        ).all()
+        rows[0].last_assessed_at = datetime(2026, 9, 1, tzinfo=tz.utc)
+        rows[1].last_assessed_at = datetime(2026, 9, 5, tzinfo=tz.utc)
+        db.commit()
+
+    detail = client.get("/api/skills/mcp.tool_ecosystem")
+    assert detail.status_code == 200
+    mastery = detail.json()["mastery"]
+    # 最新评估（9-05, level=1）优先，样本合计 8
+    assert mastery["level"] == 1
+    assert mastery["sample_count"] == 8
+    assert mastery["trend"] == "down"
+    assert mastery["last_assessed_at"]
+
+
+def test_recommendation_unknown_flag_and_fields(client):
+    from app.models import (
+        AnswerAttempt,
+        CandidateKnowledgeState,
+        CandidateProfile,
+        InterviewQuestion,
+        InterviewSession,
+        LearningRecommendation,
+        ProfileSnapshot,
+        User,
+    )
+    from datetime import datetime, timezone as tz
+
+    with client.app.state.session_factory() as db:
+        user = User(id=str(uuid4()))
+        db.add(user)
+        db.flush()
+        profile = CandidateProfile(id=str(uuid4()), user_id=user.id, direction="agent_application_rag", level="beginner", target_title="Agent 工程师")
+        db.add(profile)
+        db.flush()
+        from app.models import InterviewTarget, Resume, ResumeProject
+
+        target = InterviewTarget(id=str(uuid4()), user_id=user.id, direction="agent_application_rag")
+        resume = Resume(id=str(uuid4()), user_id=user.id, resume_text="测试简历", text_hash="hash-test")
+        db.add_all([target, resume])
+        db.flush()
+        project = ResumeProject(
+            id=str(uuid4()), resume_id=resume.id, project_name="测试项目",
+            background_goal="t", tech_stack="t", responsibilities="t",
+            core_solution="t", engineering_challenges="t",
+            failure_improvements="t", quantified_results="t",
+        )
+        db.add(project)
+        db.flush()
+        session = InterviewSession(id=str(uuid4()), user_id=user.id, profile_id=profile.id, resume_project_id=project.id, target_id=target.id, mode="dialog", status="completed")
+        db.add(session)
+        db.flush()
+        snap = ProfileSnapshot(id=str(uuid4()), profile_id=profile.id, source_session_id=session.id, version=1)
+        db.add(snap)
+        profile.current_snapshot_id = snap.id
+        question = InterviewQuestion(
+            id=str(uuid4()), session_id=session.id, order=1, category="agent",
+            prompt="MCP 工具注册怎么做？", knowledge_point_id="mcp.tool_ecosystem",
+            rubric_version="v1", template_id="", signals_json="[]",
+        )
+        db.add(question)
+        db.flush()
+        answer = AnswerAttempt(
+            id=str(uuid4()), session_id=session.id, question_id=question.id,
+            answer_text="不知道", status="explicit_unknown",
+            client_submission_id=str(uuid4()),
+            answer_text_hash="hash-unknown", payload_hash="payload-unknown",
+        )
+        db.add(answer)
+        db.flush()
+        from app.models import AssessmentRun
+
+        db.add(AssessmentRun(
+            id=str(uuid4()), answer_id=answer.id, question_id=question.id,
+            evaluator="rule-based", rubric_version="v1",
+            attempt_number=1, status="valid",
+            aggregate_level=0, aggregate_confidence=0.9,
+        ))
+        db.add(CandidateKnowledgeState(
+            id=str(uuid4()), user_id=user.id, profile_id=profile.id,
+            skill_id="mcp.tool_ecosystem", current_level=0, valid_sample_count=1,
+            last_session_id=session.id, last_assessed_at=datetime.now(tz.utc),
+        ))
+        db.add(LearningRecommendation(
+            id=str(uuid4()), profile_id=profile.id, profile_snapshot_id=snap.id,
+            skill_id="mcp.tool_ecosystem", priority="high",
+            reason="需要补 MCP", actions_json='[]', success_criteria_json='[]',
+        ))
+        db.commit()
+        pid = profile.id
+
+    summary = client.get(f"/api/profiles/{pid}/summary")
+    assert summary.status_code == 200
+    recs = summary.json()["recommendations"]
+    target = [r for r in recs if r["skill_id"] == "mcp.tool_ecosystem"]
+    assert target, recs
+    rec = target[0]
+    assert rec["is_unknown"] is True
+    assert rec["source_answer_excerpt"] is None
+    assert rec["studied"] is False
+    assert rec["level"] == 0

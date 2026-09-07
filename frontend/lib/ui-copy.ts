@@ -9,8 +9,8 @@ export const brandCopy = {
 
 export const homeCopy = {
   eyebrow: "Echo Offer · Agent 面试准备",
-  projectTitle: "把你做过的项目，讲清楚。",
-  projectDescription: "上传一份简历，我们先挑出一个项目；你确认内容后，再按真实面试的方式练一遍。",
+  projectTitle: "拿你的简历，模拟一场 Agent 岗位的面试。",
+  projectDescription: "上传简历后自动挑出项目、生成问题；答题过程中有追问和点评，全部答完后统一评分复盘。",
   uploadTitle: "上传你的简历",
   uploadHint: "支持 PDF 和 DOCX，上传后可以检查文字。",
   projectSection: "确认一个项目",
@@ -30,35 +30,19 @@ export const homeCopy = {
 } as const;
 
 export const interviewCopy = {
-  progress: "题目进度",
-  questionOf: (current: number, total: number) => `第 ${current} 题 / 共 ${total} 题`,
-  answerHelp: "按你真实做过的事情来答，全部答完后，再一起看看结果。",
-  noHint: "这题不提供提示",
-  saveAndContinue: "保存并继续",
-  unknown: "我不知道",
-  skip: "跳过",
   completedTitle: "这场练习完成了。",
   generatingTitle: "正在整理你的结果。",
 } as const;
 
 export const reportCopy = {
   content: "结果回看",
-  feedbackTitle: "先看看答得好的地方，再补上缺的部分。",
-  answerExcerpt: "你的回答",
   scoreReason: "为什么这样判断",
-  scoreExplanation: "这次结果怎么来的",
-  goodAnswers: "答得好的地方",
-  improvements: "可以补充的地方",
-  completed: "完成题目",
-  goodCount: "答得扎实",
-  improveCount: "需要补充",
 } as const;
 
 export const statusCopy = {
   saved: "回答已经保存。",
   generating: "正在整理回答，请先不要关闭页面。",
   timeoutTitle: "结果还没有生成出来。",
-  timeoutReason: "服务响应比较慢",
   timeoutDescription: "回答已经保存，不需要重新答题。可以再试一次，也可以稍后回来。",
   timeoutAction: "再生成一次",
   backHome: "返回首页",

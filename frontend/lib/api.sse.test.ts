@@ -1,4 +1,4 @@
-import { parseSseBlock } from "./api";
+import { parseSseBlock } from "./api.ts";
 
 const parsed = parseSseBlock(
   'event: stage\ndata: {"stage":"analyzing","message":"正在分析项目"}\n\n',

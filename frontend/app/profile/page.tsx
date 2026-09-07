@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState  } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   getInterviewHistory,
   getProfileHistory,
   getProfileSummary,
+  setTargetDate as setTargetDateApi,
+  startDrill,
+  startOpenDrill,
+  startVerification,
   updateRecommendationStatus,
   type InterviewHistoryItem,
   type LearningRecommendation,
@@ -13,7 +18,7 @@ import {
   type ProfileSummary,
   type RecommendationStatus,
 } from "@/lib/api";
-import { replaceRecommendation } from "@/lib/profile-state";
+import { formatDateTime } from "@/lib/format";
 
 type ProfileChoice = {
   id: string;
@@ -23,19 +28,6 @@ type ProfileChoice = {
   sessionCount: number;
   updatedAt: string;
 };
-
-const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-function formatDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "时间未知" : dateFormatter.format(date);
-}
 
 function buildProfileChoices(items: InterviewHistoryItem[]) {
   const choices = new Map<string, ProfileChoice>();
@@ -120,9 +112,15 @@ function plainRecommendationReason(recommendation: LearningRecommendation) {
 }
 
 export default function ProfilePage() {
+  const router = useRouter();
   const [historyItems, setHistoryItems] = useState<InterviewHistoryItem[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [summary, setSummary] = useState<ProfileSummary | null>(null);
+  const skillNameOf = useCallback(
+    (skillId: string) =>
+      summary?.skills.find((skill) => skill.skill_id === skillId)?.skill_name ?? skillId,
+    [summary],
+  );
   const [snapshots, setSnapshots] = useState<ProfileSnapshot[]>([]);
   const [loadingChoices, setLoadingChoices] = useState(true);
   const [loadingProfile, setLoadingProfile] = useState(false);
@@ -130,6 +128,8 @@ export default function ProfilePage() {
   const [profileError, setProfileError] = useState("");
   const [actionError, setActionError] = useState("");
   const [updatingRecommendationId, setUpdatingRecommendationId] = useState("");
+  const [startingPracticeId, setStartingPracticeId] = useState("");
+  const [expandedSkillId, setExpandedSkillId] = useState("");
 
   const choices = useMemo(() => buildProfileChoices(historyItems), [historyItems]);
   const selectedChoice = choices.find((choice) => choice.id === selectedProfileId) ?? choices[0];
@@ -143,9 +143,7 @@ export default function ProfilePage() {
       const items = await getInterviewHistory();
       setHistoryItems(items);
       const nextChoices = buildProfileChoices(items);
-      const requestedId = typeof window === "undefined"
-        ? ""
-        : new URLSearchParams(window.location.search).get("profile_id") ?? "";
+      const requestedId = new URLSearchParams(window.location.search).get("profile_id") ?? "";
       setSelectedProfileId(nextChoices.find((choice) => choice.id === requestedId)?.id ?? nextChoices[0]?.id ?? "");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "读取记录失败，请稍后重试。");
@@ -186,9 +184,7 @@ export default function ProfilePage() {
 
   function selectProfile(profileId: string) {
     setSelectedProfileId(profileId);
-    if (typeof window !== "undefined") {
-      window.history.replaceState(null, "", `/profile?profile_id=${encodeURIComponent(profileId)}`);
-    }
+    window.history.replaceState(null, "", `/profile?profile_id=${encodeURIComponent(profileId)}`);
   }
 
   async function changeRecommendationStatus(recommendationId: string, status: RecommendationStatus) {
@@ -199,13 +195,47 @@ export default function ProfilePage() {
       setSummary((current) => current
         ? {
           ...current,
-          recommendations: replaceRecommendation(current.recommendations, updated),
+          recommendations: current.recommendations.map((item) =>
+            item.id === updated.id ? updated : item,
+          ),
         }
         : current);
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : "更新练习状态失败，请稍后重试。");
     } finally {
       setUpdatingRecommendationId("");
+    }
+  }
+
+  const daysToInterview = summary?.target_date
+    ? Math.round((new Date(summary.target_date).getTime() - Date.now()) / 86400000)
+    : null;
+
+  async function saveTargetDate(profileId: string, date: string | null) {
+    setActionError("");
+    try {
+      await setTargetDateApi(profileId, date);
+      setSummary((current) => (current ? { ...current, target_date: date } : current));
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "保存日期失败。");
+    }
+  }
+
+  async function startPractice(recommendationId: string, kind: "drill" | "verification") {
+    const busyId = recommendationId || "open-drill";
+    setStartingPracticeId(busyId);
+    setActionError("");
+    try {
+      const result = kind === "drill"
+        ? recommendationId
+          ? await startDrill(recommendationId)
+          : await startOpenDrill()
+        : await startVerification(recommendationId);
+      router.push(`/interview/${result.session_id}`);
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "无法开始这场练习，请稍后再试。");
+    } finally {
+      setStartingPracticeId("");
     }
   }
 
@@ -236,7 +266,7 @@ export default function ProfilePage() {
           <div className="mint-profile-counter" aria-label={`${choices.length} 个求职方向`}>
             <span>已记录方向</span>
             <strong>{choices.length}</strong>
-            <span>{choices.length === 1 ? "个" : "个"}</span>
+            <span>个</span>
           </div>
         </section>
 
@@ -299,10 +329,94 @@ export default function ProfilePage() {
                       <span className="mint-status-pill mint-status-pill--ready">已记录</span>
                     </div>
                     <p className="mint-profile-summary">{summary.summary || "再完成几次面试，这里的建议会更具体。"}</p>
+                    {(
+                      <div className="mint-today-card" aria-label="今日训练">
+                        <div className="mint-today-head">
+                          <div className="mint-today-date">
+                            <span className="mint-card-kicker">目标面试日期</span>
+                            <input
+                              type="date"
+                              className="mint-input"
+                              value={(summary.target_date ?? "").slice(0, 10)}
+                              onChange={(event) => void saveTargetDate(selectedProfileId, event.target.value || null)}
+                            />
+                          </div>
+                          {daysToInterview != null && (
+                            <strong className={`mint-countdown ${daysToInterview <= 3 ? "is-soon" : ""}`}>
+                              {daysToInterview >= 0 ? `距面试 ${daysToInterview} 天` : "面试日已过"}
+                            </strong>
+                          )}
+                        </div>
+                        {summary.today_plan.length > 0 && (
+                          <div className="mint-today-actions">
+                            <span className="mint-card-kicker">今天该做的</span>
+                            {summary.today_plan.map((action) => (
+                              <div className="mint-today-action" key={`${action.type}-${action.skill_id}`}>
+                                <span className={`mint-chip ${action.type === "verify" ? "is-verify" : ""}`}>
+                                  {{ verify: "验证", study: "学习", review: "复习", practice: "练习", random: "保持手感" }[action.type] ?? action.type}
+                                </span>
+                                <span className="mint-today-reason">{action.reason}</span>
+                                {action.type === "verify" && action.recommendation_id && (
+                                  <button type="button" className="mint-button mint-button--outline" onClick={() => void startPractice(action.recommendation_id!, "verification")} disabled={startingPracticeId === action.recommendation_id}>
+                                    开始验证
+                                  </button>
+                                )}
+                                {action.type === "study" && action.skill_id && (
+                                  <a className="mint-button mint-button--outline" href={`/skills/${encodeURIComponent(action.skill_id)}`}>去学习</a>
+                                )}
+                                {action.skill_id && (
+                                  <a className="mint-chip mint-filter" href={`/questions?kp=${encodeURIComponent(skillNameOf(action.skill_id))}&phase=%E5%85%AB%E8%82%A1`}>去刷真题 →</a>
+                                )}
+                                {(action.type === "practice" || action.type === "review") && action.skill_id && (
+                                  <button type="button" className="mint-button mint-button--outline" onClick={() => { const sid = action.skill_id; if (sid) void startPractice(sid, "drill"); }} disabled={startingPracticeId === action.skill_id}>
+                                    {action.type === "review" ? "先复习再练" : "专项练一次"}
+                                  </button>
+                                )}
+                                {action.type === "random" && (
+                                  <button type="button" className="mint-button mint-button--outline" onClick={() => void startPractice("", "drill")} disabled={startingPracticeId === "open-drill"}>
+                                    随机练一轮
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {summary.readiness != null && (
+                      <div className="mint-readiness" aria-label={`综合准备度 ${summary.readiness} / 100`}>
+                        <div className="mint-readiness-head">
+                          <span className="mint-card-kicker">综合准备度（随生疏自动衰减）</span>
+                          <strong className="mint-readiness-number">{summary.readiness}<small> / 100</small></strong>
+                          {summary.avg_target != null && (
+                            <span className="mint-note">目标岗位平均要求 {summary.avg_target} / 4</span>
+                          )}
+                        </div>
+                        <div className="mint-readiness-bar"><span style={{ width: `${Math.min(100, summary.readiness)}%` }} /></div>
+                        {!!summary.recent_changes.length && (
+                          <p className="mint-readiness-changes">
+                            最近一场：{summary.recent_changes.map((change) => `${change.skill_name} ${change.delta > 0 ? "↑" : "↓"}${Math.abs(change.delta)}`).join("，")}
+                          </p>
+                        )}
+                        {!!summary.question_angles.length && (
+                          <p className="mint-readiness-changes">
+                            深挖对话中被追问的角度：{summary.question_angles.map((angle) => `${angle.tag} ${angle.count} 次`).join(" · ")}
+                          </p>
+                        )}
+                        {summary.practice_effectiveness.pairs > 0 && (
+                          <p className="mint-readiness-changes">
+                            练→验有效性：{summary.practice_effectiveness.effective} / {summary.practice_effectiveness.pairs} 次验证达到练习前水平
+                          </p>
+                        )}
+                        {summary.verifiable_count > 0 && (
+                          <p className="mint-readiness-changes"><strong>{summary.verifiable_count} 项练习可以验证了</strong>，到下方薄弱项里开始验证。</p>
+                        )}
+                      </div>
+                    )}
                     <div className="mint-profile-overview-stats">
                       <div><span>参考面试</span><strong>{selectedSessions.length}</strong><small>场</small></div>
                       <div><span>已结束</span><strong>{completedSessions}</strong><small>场</small></div>
-                      <div><span>最近更新</span><strong>{formatDate(summary.updated_at)}</strong></div>
+                      <div><span>最近更新</span><strong>{formatDateTime(summary.updated_at)}</strong></div>
                     </div>
                   </section>
 
@@ -317,6 +431,9 @@ export default function ProfilePage() {
                     {!weakRecommendations.length ? (
                       <div className="mint-card mint-profile-subempty">
                         <p className="mint-note">目前没有需要优先补的地方，继续保持并积累新的回答。</p>
+                        <button type="button" className="mint-button mint-button--outline" style={{ marginTop: 12 }} onClick={() => void startPractice("", "drill")} disabled={startingPracticeId === "open-drill"}>
+                          {startingPracticeId === "open-drill" ? "正在准备…" : "没有薄弱点？随机练一轮"}
+                        </button>
                       </div>
                     ) : (
                       <div className="mint-weak-point-list">
@@ -351,6 +468,22 @@ export default function ProfilePage() {
                                             你当时提到：{recommendation.source_answer_excerpt}
                                           </blockquote>
                                         )}
+                                        {recommendation.is_unknown && (
+                                          <p className="mint-note" style={{ margin: "8px 0 0" }}>
+                                            这道题当时直接回答了「不知道」——先看讲解补概念，再来专项练。
+                                          </p>
+                                        )}
+                                        <div className="mint-question-meta" style={{ marginTop: 10 }}>
+                                          <span className="mint-chip">
+                                            {recommendation.studied
+                                              ? (recommendation.level != null && recommendation.level >= 2 ? "已学·仍需练" : "答过但弱")
+                                              : "还没学过"}
+                                          </span>
+                                          <a className="mint-chip mint-filter" href={`/questions?kp=${encodeURIComponent(recommendation.skill_name)}&phase=%E5%85%AB%E8%82%A1`}>去刷真题 →</a>
+                                          {!recommendation.studied && (
+                                            <a className="mint-nav-link" href={`/skills/${encodeURIComponent(recommendation.skill_id)}`}>先学讲解</a>
+                                          )}
+                                        </div>
                                         {!!recommendation.actions.length && (
                                           <div className="mint-recommendation-block">
                                             <span>建议怎么练</span>
@@ -369,7 +502,18 @@ export default function ProfilePage() {
                                         )}
                                         <div className="mint-weak-point-actions">
                                           {sourceHref && <a href={sourceHref}>查看这次回答</a>}
-                                          <button type="button" className="mint-button mint-button--primary" onClick={() => void changeRecommendationStatus(recommendation.id, action.status)} disabled={updating}>
+                                          {recommendation.verification_ready ? (
+                                            <button type="button" className="mint-button mint-button--primary" onClick={() => void startPractice(recommendation.id, "verification")} disabled={startingPracticeId === recommendation.id}>
+                                              {startingPracticeId === recommendation.id ? "正在准备…" : "验证一下练没练会"}
+                                            </button>
+                                          ) : recommendation.practice_completed_at ? (
+                                            <span className="mint-note">练过了，过几天回来验证效果更好</span>
+                                          ) : (
+                                            <button type="button" className="mint-button mint-button--primary" onClick={() => void startPractice(recommendation.id, "drill")} disabled={startingPracticeId === recommendation.id}>
+                                              {startingPracticeId === recommendation.id ? "正在准备…" : "专项练一次"}
+                                            </button>
+                                          )}
+                                          <button type="button" className="mint-button mint-button--outline" onClick={() => void changeRecommendationStatus(recommendation.id, action.status)} disabled={updating}>
                                             {updating ? "正在更新…" : action.label}
                                           </button>
                                           {recommendation.status !== "dismissed" && recommendation.status !== "completed" && (
@@ -404,20 +548,50 @@ export default function ProfilePage() {
                       <div className="mint-profile-skill-list">
                         {summary.skills.map((skill) => {
                           const trend = trendCopy(skill.trend);
+                          const target = skill.target_level;
+                          const expanded = expandedSkillId === skill.skill_id;
+                          const toggleEvidence = () => setExpandedSkillId(expanded ? "" : skill.skill_id);
                           return (
                             <article className="mint-card mint-profile-skill" key={skill.skill_id}>
                               <div className="mint-profile-skill-top">
                                 <div>
-                                  <h3>{skill.skill_name}</h3>
+                                  <h3><a className="mint-kp-link" href={`/skills/${encodeURIComponent(skill.skill_id)}`}>{skill.skill_name}</a></h3>
                                   <span>{skill.category}</span>
                                 </div>
-                                <span className={`mint-profile-trend mint-profile-trend--${trend.tone}`}>{trend.label}</span>
+                                <span className="mint-profile-skill-badges">
+                                  {skill.freshness === "stale" && <span className="mint-chip is-stale">生疏 {skill.days_since ?? ""} 天</span>}
+                                  {skill.freshness === "cooling" && <span className="mint-chip">冷却中</span>}
+                                  {skill.studied && <span className="mint-chip">已学</span>}
+                                  <span className={`mint-profile-trend mint-profile-trend--${trend.tone}`}>{trend.label}</span>
+                                </span>
+                              </div>
+                              <div className="mint-skill-bar" aria-label={`当前等级 ${skill.level} / 4${target != null ? `，目标 ${target} / 4` : ""}`}>
+                                <span className="mint-skill-bar-fill" style={{ width: `${(skill.level / 4) * 100}%` }} />
+                                {target != null && <span className="mint-skill-bar-target" style={{ left: `${(target / 4) * 100}%` }} aria-hidden="true" />}
                               </div>
                               <div className="mint-profile-skill-details">
-                                <span>最近表现 <strong>{performanceCopy(skill.level)}</strong></span>
+                                <span>当前等级 <strong>{skill.level} / 4</strong> · {performanceCopy(skill.level)}{target != null ? `（目标 ${target}）` : ""}</span>
                                 <span>相关回答 <strong>{skill.sample_count} 次</strong></span>
-                                <span>最近变化 <strong>{trend.label}</strong></span>
+                                <span className="mint-skill-sparks" aria-label="最近几次的等级轨迹">
+                                  {(skill.recent_levels.length ? skill.recent_levels.slice(-5) : [skill.level]).map((level, index, all) => (
+                                    <span key={index} className={`mint-spark ${level >= 3 ? "is-strong" : level >= 2 ? "is-mid" : "is-weak"} ${index === all.length - 1 ? "is-latest" : ""}`} title={`等级 ${level}`} />
+                                  ))}
+                                </span>
                               </div>
+                              <button type="button" className="mint-link-button" onClick={() => setExpandedSkillId(expanded ? "" : skill.skill_id)}>
+                                {expanded ? "收起证据链" : "这个等级怎么来的？"}
+                              </button>
+                              {expanded && (
+                                <div className="mint-evidence-chain">
+                                  {skill.recent_answers.length ? skill.recent_answers.map((item, index) => (
+                                    <div className="mint-evidence-item" key={index}>
+                                      <p className="mint-evidence-head">等级 {item.level} / 4 · <a className="mint-kp-link" href={`/report/${item.session_id}`}>查看该场</a></p>
+                                      <p className="mint-note">{item.prompt}</p>
+                                      {item.commentary && <p className="mint-note">点评：{item.commentary}</p>}
+                                    </div>
+                                  )) : <p className="mint-note">还没有有效回答。</p>}
+                                </div>
+                              )}
                             </article>
                           );
                         })}
@@ -439,7 +613,7 @@ export default function ProfilePage() {
                         {snapshots.slice(0, 8).map((snapshot) => (
                           <div className="mint-profile-timeline-item" key={snapshot.id}>
                             <span className="mint-profile-timeline-dot" aria-hidden="true" />
-                            <div><strong>第 {snapshot.version} 次记录</strong><span>{formatDate(snapshot.created_at)}</span></div>
+                            <div><strong>第 {snapshot.version} 次记录</strong><span>{formatDateTime(snapshot.created_at)}</span></div>
                             <a href={`/report/${snapshot.source_session_id}`}>查看这场</a>
                           </div>
                         ))}

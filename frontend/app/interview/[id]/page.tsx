@@ -1,38 +1,19 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import {
-  ApiError,
-  assessSession,
-  AssessmentBatchResponse,
-  getSession,
-  SessionView,
-  submitAnswer,
-} from "@/lib/api";
-import { assessmentStages, type AssessmentStage } from "@/lib/assessment-flow";
+import { ApiError, assessSession, AssessmentBatchResponse, decideFollowup, fetchQuestionFeedback, finishDialog, getSession, SessionView, skipWrapUp, submitAnswer, submitDialogAnswer, submitFollowupAnswer } from "@/lib/api";
+import type { AssessmentStage } from "@/lib/assessment-flow";
+import { assessmentFailureMessage, hasUsableAssessmentResult } from "@/lib/assessment-copy";
 import { brandCopy, interviewCopy, statusCopy } from "@/lib/ui-copy";
 
 function newSubmissionId() {
-  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return crypto.randomUUID();
 }
 
-const categoryLabels = { project: "项目题", agent: "基础题", reliability: "工程题" } as const;
-
-function batchErrorMessage(result: AssessmentBatchResponse) {
-  const failedAssessment = result.assessments.find((item) => item.assessment.error_code);
-  const messages: Record<string, string> = {
-    provider_auth_failed: "评分服务配置有问题，请稍后再试。",
-    provider_rate_limited: "评分服务现在比较忙，请稍后再试。",
-    provider_unavailable: "评分服务暂时不可用，请稍后再试。",
-    invalid_batch_case: "回答已经保存，但这次报告没有生成。可以直接重试。",
-    invalid_evidence: "回答已经保存，但这次报告没有生成。可以直接重试。",
-    system_error: "回答已经保存，但这次报告没有生成。可以直接重试。",
-  };
-  return messages[failedAssessment?.assessment.error_code ?? ""] ?? "这次没有拿到评分结果。";
-}
+type InputMode = "dialog" | "answer" | "followup" | "none";
 
 export default function InterviewPage() {
   const params = useParams<{ id: string }>();
@@ -41,24 +22,54 @@ export default function InterviewPage() {
   const [session, setSession] = useState<SessionView | null>(null);
   const [answerText, setAnswerText] = useState("");
   const [submissionId, setSubmissionId] = useState(newSubmissionId);
+  const [followupText, setFollowupText] = useState("");
+  const [followupSubmissionId, setFollowupSubmissionId] = useState(newSubmissionId);
+  const [dialogText, setDialogText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [assessment, setAssessment] = useState<AssessmentBatchResponse | null>(null);
   const [assessmentStage, setAssessmentStage] = useState<AssessmentStage | null>(null);
   const [canRetryAssessment, setCanRetryAssessment] = useState(false);
+  const chatRef = useRef<HTMLDivElement | null>(null);
 
   async function loadSession() {
     try {
       setSession(await getSession(sessionId));
       setError("");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "无法读取面试状态。");
+      setError(caught instanceof Error ? caught.message : "无法读取这场练习。" );
     }
   }
 
   useEffect(() => { void loadSession(); }, [sessionId]);
 
   const question = session?.current_question;
+  const isDialog = session?.mode === "dialog";
+  const stage = session?.stage ?? "knowledge";
+  const timeline = session?.timeline ?? [];
+  const pendingFollowup = question?.followup?.status === "pending" ? question.followup : null;
+
+  // 输入坞的分派：追问回答 > 阶段对话 > 知识题作答
+  const inputMode: InputMode =
+    !session || session.status === "completed"
+      ? "none"
+      : pendingFollowup
+        ? "followup"
+        : isDialog && (stage === "intro" || stage === "project_dialog" || stage === "wrap_up")
+          ? "dialog"
+          : question
+            ? "answer"
+            : "none";
+
+  // 新消息自动滚到底部
+  useEffect(() => {
+    const el = chatRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [timeline.length, session?.status, assessmentStage]);
+
+  function hasPendingFollowup(view: SessionView | null) {
+    return Boolean(view?.questions.some((item) => item.followup?.status === "pending"));
+  }
 
   async function generateAssessment() {
     setBusy(true);
@@ -69,10 +80,14 @@ export default function InterviewPage() {
       setAssessmentStage("整理回答");
       const result = await assessSession(sessionId);
       setAssessment(result);
-      if (result.status !== "valid") {
+      if (!hasUsableAssessmentResult(result)) {
         setCanRetryAssessment(true);
-        setError(batchErrorMessage(result));
+        setError(assessmentFailureMessage(result));
         setAssessmentStage(null);
+        return;
+      }
+      if (result.status !== "valid") {
+        router.push(`/report/${sessionId}`);
         return;
       }
       setAssessmentStage("生成报告");
@@ -80,7 +95,7 @@ export default function InterviewPage() {
     } catch (caught) {
       setCanRetryAssessment(true);
       setAssessmentStage(null);
-      setError(caught instanceof Error ? "回答已经保存，但这次报告没有生成。可以直接重试。" : "这次没有拿到评分结果。");
+      setError(caught instanceof ApiError ? caught.message : "整理结果时遇到了本地错误，可以再试一次。" );
     } finally {
       setBusy(false);
     }
@@ -95,144 +110,243 @@ export default function InterviewPage() {
     setBusy(true);
     setError("");
     try {
-      await submitAnswer(sessionId, {
-        question_id: question.id,
-        client_submission_id: submissionId,
-        status,
-        answer_text: status === "explicit_unknown" ? "不知道" : answerText,
-      });
+      await submitAnswer(sessionId, { question_id: question.id, client_submission_id: submissionId, status, answer_text: status === "explicit_unknown" ? "不知道" : answerText });
       setAnswerText("");
       setSubmissionId(newSubmissionId());
+      if (status === "submitted") {
+        // 追问决策与练习反馈并行发起；任一失败都不阻塞面试流程
+        const [decision] = await Promise.all([
+          decideFollowup(sessionId, question.id).catch(() => null),
+          fetchQuestionFeedback(sessionId, question.id).catch(() => null),
+        ]);
+        if (decision?.followup?.status === "pending") {
+          setSession(await getSession(sessionId));
+          return;
+        }
+      }
       const next = await getSession(sessionId);
       setSession(next);
-      if (next.status === "completed") await generateAssessment();
+      if (next.status === "completed" && !hasPendingFollowup(next)) await generateAssessment();
     } catch (caught) {
-      if (caught instanceof ApiError && caught.status === 409) {
-        setError("这次提交编号已经使用过，但内容不同。请刷新当前面试状态后再继续。");
-      } else {
-        setError(caught instanceof Error ? caught.message : "提交失败，请保持当前回答并重试。");
-      }
+      if (caught instanceof ApiError && caught.status === 409) setError("这次提交编号已经使用过，请刷新当前页面后再继续。");
+      else setError(caught instanceof Error ? caught.message : "提交失败，请保持当前回答并重试。" );
     } finally {
       setBusy(false);
     }
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleFollowupSubmit() {
+    if (!question?.followup || busy) return;
+    if (!followupText.trim()) {
+      setError("请先写下追问的回答。");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await submitFollowupAnswer(sessionId, question.id, {
+        client_submission_id: followupSubmissionId,
+        answer_text: followupText,
+      });
+      setFollowupText("");
+      setFollowupSubmissionId(newSubmissionId());
+      // 追问链：答完一轮后询问是否还有下一层追问
+      try {
+        const decision = await decideFollowup(sessionId, question.id);
+        if (decision.followup?.status === "pending") {
+          setSession(await getSession(sessionId));
+          return;
+        }
+      } catch {
+        // 追问收束失败不阻塞面试流程
+      }
+      const next = await getSession(sessionId);
+      setSession(next);
+      if (next.status === "completed" && !hasPendingFollowup(next)) await generateAssessment();
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 409) setError("这条追问回答已经提交过，请刷新当前页面后再继续。");
+      else setError(caught instanceof Error ? caught.message : "追问提交失败，请保留内容后重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDialogSubmit() {
+    if (busy) return;
+    if (!dialogText.trim()) {
+      setError("请先写下你的回答。");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await submitDialogAnswer(sessionId, dialogText);
+      setDialogText("");
+      const next = await getSession(sessionId);
+      setSession(next);
+      if (next.stage === "completed" && next.status === "completed") {
+        await generateAssessment();
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "提交失败，请保留内容后重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSkipWrapUp() {
+    setBusy(true);
+    try {
+      await skipWrapUp(sessionId);
+      const next = await getSession(sessionId);
+      setSession(next);
+      if (next.status === "completed") await generateAssessment();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "操作失败，请稍后再试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleFinishDialog() {
+    setBusy(true);
+    try {
+      await finishDialog(sessionId);
+      const next = await getSession(sessionId);
+      setSession(next);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "操作失败，请稍后再试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function submitCurrent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void handleAnswer("submitted");
+    if (inputMode === "followup") void handleFollowupSubmit();
+    else if (inputMode === "dialog") void handleDialogSubmit();
+    else void handleAnswer("submitted");
   }
 
-  if (!session && !error) {
-    return <main className="signal-page grid min-h-screen place-items-center"><p className="signal-note">正在恢复面试状态…</p></main>;
-  }
+  if (!session && !error) return <main className="mint-page mint-loading"><p className="mint-note">正在恢复这场练习…</p></main>;
 
-  const completedCount = session?.progress.completed ?? 0;
   const totalCount = session?.progress.total ?? 0;
-  const currentOrder = question?.order ?? totalCount;
+  const completedCount = session?.progress.completed ?? 0;
+  const stageLabel =
+    isDialog
+      ? ({ intro: "自我介绍", project_dialog: "项目深挖", knowledge: "知识环节", wrap_up: "反问环节", completed: "面试完成" }[stage] ?? "")
+      : `知识环节 · 已答 ${completedCount}/${totalCount}`;
+  const showTyping = busy && (inputMode === "dialog" || stage === "project_dialog");
 
   return (
-    <main className="signal-page">
-      <div className="signal-container">
-        <header className="signal-header">
-          <button type="button" onClick={() => router.push("/")} className="signal-brand" aria-label={`${brandCopy.name} 首页`}>
-            <span className="signal-brand-mark" aria-hidden="true">E/</span>
-            <span className="signal-brand-name">{brandCopy.name}</span>
-          </button>
-          <div className="signal-header-meta">
-            <span>{brandCopy.interview}</span>
-            <strong>{interviewCopy.questionOf(currentOrder, totalCount)}</strong>
-          </div>
-        </header>
+    <main className="mint-page mint-page--interview">
+      <header className="mint-header">
+        <button type="button" onClick={() => router.push("/")} className="mint-brand" aria-label={`${brandCopy.name} 首页`}>
+          <span className="mint-brand-mark" aria-hidden="true">✦</span><span className="mint-brand-name">{brandCopy.name}</span>
+        </button>
+        <nav className="mint-nav" aria-label="面试导航"><button type="button" className="mint-nav-gear" onClick={() => router.push("/console")}>⚙ 模型设置</button><span className="mint-nav-current">{brandCopy.interview}</span><span className="mint-nav-note">{stageLabel}</span></nav>
+      </header>
 
-        <div className="signal-layout">
-          <aside className="signal-rail" aria-label="答题进度">
-            <p className="signal-rail-heading">答题进度</p>
-            <ol className="signal-rail-list">
-              <li className={`signal-rail-step ${question ? "is-active" : "is-done"}`} data-step="01">回答问题</li>
-              <li className={`signal-rail-step ${assessmentStage ? "is-active" : session?.status === "completed" ? "is-done" : ""}`} data-step="02">整理回答</li>
-              <li className={`signal-rail-step ${assessment?.status === "valid" ? "is-done" : ""}`} data-step="03">查看报告</li>
-            </ol>
-            <div className="signal-status" style={{ marginTop: 28 }}>
-              <p className="signal-status-title">{completedCount} / {totalCount}</p>
-              <p className="signal-status-copy">已经保存的回答</p>
+      <div className="mint-stage-progress" aria-label="面试进度"><span style={{ width: `${totalCount ? Math.round((completedCount / totalCount) * 100) : 0}%` }} /></div>
+
+      {error && <div className="mint-alert" role="alert">{error}</div>}
+
+      <div className="mint-chat-scroll" ref={chatRef}>
+        <div className="mint-chat">
+          {timeline.map((message, index) => {
+            if (message.role === "coach") {
+              return (
+                <div className="mint-coach" key={`coach-${index}`}>
+                  <span className="mint-coach-ico">✎</span>
+                  <span><i>悄悄说 · 不计入本场结果</i>：{message.content}</span>
+                </div>
+              );
+            }
+            const isSelf = message.role === "candidate";
+            return (
+              <div className={`mint-msg ${isSelf ? "self" : ""}`} key={`${message.kind}-${index}`}>
+                <div className="mint-ava">{isSelf ? "我" : "✦"}</div>
+                <div className="mint-msg-body">
+                  <div className="mint-who">
+                    {isSelf ? "我" : message.kind === "followup" ? "面试官 · 追问" : "面试官"}
+                  </div>
+                  <div className={`mint-bubble ${isSelf ? "is-self" : ""}`}>{message.content}</div>
+                </div>
+              </div>
+            );
+          })}
+
+          {pendingFollowup && (
+            <div className="mint-msg">
+              <div className="mint-ava">✦</div>
+              <div className="mint-msg-body">
+                <div className="mint-who">面试官 · 追问</div>
+                <div className="mint-bubble">{pendingFollowup.question_text}</div>
+              </div>
             </div>
-          </aside>
+          )}
 
-          <section className="signal-workspace" aria-label="面试答题工作区">
-            {error && <div className="signal-alert" role="alert">{error}</div>}
+          {showTyping && (
+            <div className="mint-msg">
+              <div className="mint-ava">✦</div>
+              <div className="mint-msg-body">
+                <div className="mint-bubble mint-typing" role="status" aria-label="面试官正在思考"><span /><span /><span /></div>
+              </div>
+            </div>
+          )}
 
-            {session && question ? (
-              <form onSubmit={handleSubmit}>
-                <div className="signal-intro">
-                  <p className="signal-eyebrow">{interviewCopy.progress} · {interviewCopy.questionOf(question.order, totalCount)}</p>
-                  <div className="signal-question-meta">
-                    <span className="signal-tag">{categoryLabels[question.category]}</span>
-                    {question.is_anchor && <span className="signal-tag" aria-label="本题不提供提示">{interviewCopy.noHint}</span>}
-                  </div>
-                  <h1 className="signal-question-text">{question.prompt}</h1>
-                  <p className="signal-copy">{interviewCopy.answerHelp}</p>
-                </div>
-
-                <div className="signal-panel signal-question">
-                  <label className="signal-field" htmlFor="answer-text">
-                    <span className="signal-field-label">你的回答</span>
-                    <textarea
-                      id="answer-text"
-                      value={answerText}
-                      onChange={(event) => setAnswerText(event.target.value)}
-                      placeholder="从你的实际项目出发，写下你会如何回答……"
-                      className="signal-textarea signal-answer"
-                      aria-label="你的面试回答"
-                    />
-                  </label>
-                  <div className="signal-actions signal-actions--between">
-                    <div className="signal-answer-actions">
-                      <button type="button" disabled={busy} onClick={() => void handleAnswer("explicit_unknown")} className="signal-button signal-button--secondary">{interviewCopy.unknown}</button>
-                      <button type="button" disabled={busy} onClick={() => void handleAnswer("skipped")} className="signal-button signal-button--quiet">{interviewCopy.skip}</button>
-                    </div>
-                    <button type="submit" aria-label="保存并继续" disabled={busy} className="signal-button signal-button--primary">
-                      {busy ? "正在保存…" : interviewCopy.saveAndContinue}
-                    </button>
-                  </div>
-                </div>
-                <p className="signal-footer">每道回答都会保存。全部答完后，系统会一次生成本场报告。</p>
-              </form>
-            ) : session ? (
-              <section className="signal-intro" aria-label="面试完成状态">
-                <p className="signal-eyebrow">{brandCopy.interview}</p>
-                <h1 className="signal-title">{interviewCopy.completedTitle}</h1>
-                <p className="signal-copy">{statusCopy.saved}</p>
-                {assessmentStage && (
-                  <div className="signal-status" style={{ marginTop: 30 }} aria-live="polite">
-                    <p className="signal-status-title">{interviewCopy.generatingTitle}</p>
-                    <p className="signal-status-copy">{statusCopy.generating}</p>
-                    <div className="signal-progress">
-                      <div className="signal-progress-line" />
-                      <span className="signal-progress-label">{assessmentStage}</span>
-                    </div>
-                  </div>
-                )}
-                {!assessment && !assessmentStage && (
-                  <button type="button" onClick={() => void generateAssessment()} disabled={busy} className="signal-button signal-button--primary" style={{ marginTop: 28 }}>
-                    {busy ? "正在生成…" : "生成本场报告"}
-                  </button>
-                )}
-                {canRetryAssessment && !assessmentStage && (
-                  <div className="signal-status signal-status--error" style={{ marginTop: 28 }} aria-live="polite">
-                    <p className="signal-status-title">{statusCopy.timeoutTitle}</p>
-                    <p className="signal-progress-label">{statusCopy.timeoutReason}</p>
-                    <p className="signal-status-copy">{statusCopy.timeoutDescription}</p>
-                    <button type="button" onClick={() => void generateAssessment()} disabled={busy} className="signal-button signal-button--primary" style={{ marginTop: 8, width: "fit-content" }}>
-                      {busy ? "正在生成…" : statusCopy.timeoutAction}
-                    </button>
-                  </div>
-                )}
-                {assessment?.status === "valid" && <button type="button" onClick={() => router.push(`/report/${sessionId}`)} className="signal-button signal-button--primary" style={{ marginTop: 28 }}>查看本场报告</button>}
-              </section>
-            ) : null}
-          </section>
+          {session?.status === "completed" && (
+            <section className="mint-complete" aria-label="面试完成状态">
+              <span className="mint-complete-mark" aria-hidden="true">✓</span>
+              <h1 className="mint-complete-title">{interviewCopy.completedTitle}</h1>
+              <p className="mint-lead" style={{ marginInline: "auto" }}>{statusCopy.saved}</p>
+              {assessmentStage && <div className="mint-complete-progress" aria-live="polite"><p>{interviewCopy.generatingTitle}</p><p className="mint-note">{statusCopy.generating}</p><div className="mint-progress"><div className="mint-progress-line" /><span className="mint-progress-label">{assessmentStage}</span></div></div>}
+              {canRetryAssessment && !assessmentStage && <div className="mint-retry-box" aria-live="polite"><strong>{statusCopy.timeoutTitle}</strong><p className="mint-note">{statusCopy.timeoutDescription}</p><button type="button" onClick={() => void generateAssessment()} disabled={busy} className="mint-button mint-button--primary" style={{ marginTop: 12 }}>{busy ? "正在生成…" : statusCopy.timeoutAction}</button></div>}
+              {assessment && assessmentStage === null && <button type="button" onClick={() => router.push(`/report/${sessionId}`)} className="mint-button mint-button--primary" style={{ marginTop: 18 }}>查看本场结果</button>}
+              {!assessment && !assessmentStage && !canRetryAssessment && <button type="button" onClick={() => void generateAssessment()} disabled={busy} className="mint-button mint-button--primary" style={{ marginTop: 18 }}>{busy ? "正在生成…" : "生成本场结果"}</button>}
+            </section>
+          )}
         </div>
       </div>
+
+      {inputMode !== "none" && (
+        <form className="mint-dock" onSubmit={submitCurrent} aria-label="回答输入区">
+          <div className="mint-dock-inner">
+            <textarea
+              value={inputMode === "followup" ? followupText : inputMode === "dialog" ? dialogText : answerText}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (inputMode === "followup") setFollowupText(value);
+                else if (inputMode === "dialog") setDialogText(value);
+                else setAnswerText(value);
+              }}
+              placeholder={inputMode === "followup" ? "回答面试官的追问……" : inputMode === "dialog" ? "接着面试官的话往下说……" : "写下你的回答……"}
+              className="mint-dock-textarea"
+              aria-label="你的回答"
+              disabled={busy}
+            />
+            <div className="mint-dock-row">
+              <div className="mint-dock-hints">
+                {inputMode === "answer" && (
+                  <>
+                    <button type="button" disabled={busy} onClick={() => void handleAnswer("explicit_unknown")}>我不知道</button>
+                    <button type="button" disabled={busy} onClick={() => void handleAnswer("skipped")}>跳过这题</button>
+                  </>
+                )}
+                {inputMode === "dialog" && stage === "project_dialog" && (
+                  <button type="button" disabled={busy} onClick={() => void handleFinishDialog()}>提前结束深挖</button>
+                )}
+                {inputMode === "dialog" && stage === "wrap_up" && (
+                  <button type="button" disabled={busy} onClick={() => void handleSkipWrapUp()}>跳过反问</button>
+                )}
+                {inputMode === "followup" && <span className="mint-dock-note">回答面试官的追问</span>}
+              </div>
+              <button type="submit" className="mint-send" disabled={busy} aria-label="发送回答">↑</button>
+            </div>
+            <div className="mint-dock-meta">回答自动保存 · 全部结束后统一评分</div>
+          </div>
+        </form>
+      )}
     </main>
   );
 }

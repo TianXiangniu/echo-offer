@@ -1,0 +1,21 @@
+{"knowledge_point_id": "rag.retrieval_diagnosis", "question": "如果 RAG 系统召回了很多无关内容，你会怎样定位并改进问题？", "answer": "我会加更多数据和更大的模型。", "expected_level": 0}
+{"knowledge_point_id": "rag.retrieval_diagnosis", "question": "如果 RAG 系统召回了很多无关内容，你会怎样定位并改进问题？", "answer": "先看看是不是分块太大，然后调整分块大小，也可以试试换一个 embedding 模型。", "expected_level": 2}
+{"knowledge_point_id": "rag.retrieval_diagnosis", "question": "如果 RAG 系统召回了很多无关内容，你会怎样定位并改进问题？", "answer": "我会先对坏案例分桶：看是无召回、召回不相关还是相关但排序靠后，用标注好的评测集量化召回率。然后区分查询侧和索引侧问题：查询侧看改写和意图，索引侧看分块和嵌入。改进后用同一评测集回归验证。", "expected_level": 3}
+{"knowledge_point_id": "rag.retrieval_diagnosis", "question": "如果 RAG 系统召回了很多无关内容，你会怎样定位并改进问题？", "answer": "先分桶统计：无召回、不相关、排序靠后，分别对应查询理解、语料覆盖和排序问题。我做过一次：20% 的坏案例来自多轮对话缺上下文，加查询改写后坏案例减半。查询侧和索引侧分开验证，每次改动跑同一评测集的回归，避免只看单次样本的偶然提升。代价是评测集维护成本，我们只保留约 200 条核心场景。", "expected_level": 4}
+{"knowledge_point_id": "agent_runtime.tool_calling", "question": "Agent 需要调用多个工具时，你如何处理工具选择、参数校验和失败重试？", "answer": "用 function calling 就行。", "expected_level": 0}
+{"knowledge_point_id": "agent_runtime.tool_calling", "question": "Agent 需要调用多个工具时，你如何处理工具选择、参数校验和失败重试？", "answer": "工具描述写清楚一点，参数用 pydantic 校验，失败就重试几次。", "expected_level": 2}
+{"knowledge_point_id": "agent_runtime.tool_calling", "question": "Agent 需要调用多个工具时，你如何处理工具选择、参数校验和失败重试？", "answer": "工具按描述和任务让模型选择，参数按 schema 校验；校验失败把错误信息回传模型让它修正，而不是直接崩。重试有上限和退避，区分可重试和不可重试错误。有副作用的工具加幂等键保护。", "expected_level": 3}
+{"knowledge_point_id": "agent_runtime.tool_calling", "question": "Agent 需要调用多个工具时，你如何处理工具选择、参数校验和失败重试？", "answer": "选工具靠描述质量，我们踩过坑：两个工具描述相近导致选错，合并成一个带参数的工具后好了。参数校验失败回传模型修正，最多两轮，配合 schema 里加 enum 约束。重试只对超时和 5xx，指数退避上限 3 次；写操作全部幂等键，因为重试和模型重试都可能造成重复副作用。取舍是提示词变长会略微影响延迟。", "expected_level": 4}
+{"knowledge_point_id": "engineering.latency_diagnosis", "question": "线上 Agent 延迟突然升高时，你会如何拆解排查并降低影响？", "answer": "重启服务试试。", "expected_level": 0}
+{"knowledge_point_id": "engineering.latency_diagnosis", "question": "线上 Agent 延迟突然升高时，你会如何拆解排查并降低影响？", "answer": "看监控找慢的地方，可能是模型慢了，然后加缓存。", "expected_level": 2}
+{"knowledge_point_id": "engineering.latency_diagnosis", "question": "线上 Agent 延迟突然升高时，你会如何拆解排查并降低影响？", "answer": "先看分段监控：模型推理、检索、外部工具调用各占多少。区分单次慢和整体慢，看 P95 而不是平均值。短期降级用缓存和跳过非必需步骤，先止血再优化，改完压测验证。", "expected_level": 3}
+{"knowledge_point_id": "engineering.latency_diagnosis", "question": "线上 Agent 延迟突然升高时，你会如何拆解排查并降低影响？", "answer": "我们出过一次：P95 从 3 秒涨到 11 秒。分段监控显示是外部工具调用超时重试叠加，单次慢被循环放大。立即降级：该工具加熔断直接走缓存兜底，5 分钟止血。之后根治：重试改指数退避并设总预算，而不是固定次数。取舍是缓存兜底命中时答案会旧一点，我们对时效敏感场景跳过缓存。改进后用压测和灰度验证了 P95 回到 3.5 秒。", "expected_level": 4}
+{"knowledge_point_id": "mcp.tool_ecosystem", "question": "如果要给你的 Agent 接入一组外部工具，你会怎样用 MCP 这类协议来设计工具的发现、权限和调用？", "answer": "把工具都写进提示词里。", "expected_level": 0}
+{"knowledge_point_id": "mcp.tool_ecosystem", "question": "如果要给你的 Agent 接入一组外部工具，你会怎样用 MCP 这类协议来设计工具的发现、权限和调用？", "answer": "用 MCP 的好处是统一协议，工具自动发现，权限要控制好，别让 Agent 调不该调的。", "expected_level": 2}
+{"knowledge_point_id": "mcp.tool_ecosystem", "question": "如果要给你的 Agent 接入一组外部工具，你会怎样用 MCP 这类协议来设计工具的发现、权限和调用？", "answer": "MCP 把工具发现和调用统一成协议，能力按 server 组织，客户端连接后自动拿到 schema。权限按 server 和工具粒度控制，敏感操作要确认。外部服务不可用时要能隔离降级，不影响主流程。", "expected_level": 3}
+{"knowledge_point_id": "multi_agent.orchestration", "question": "什么时候应该把单个 Agent 拆成多智能体？你会怎样设计任务分解、消息传递和失败隔离？", "answer": "人多力量大，拆得越细越好。", "expected_level": 0}
+{"knowledge_point_id": "multi_agent.orchestration", "question": "什么时候应该把单个 Agent 拆成多智能体？你会怎样设计任务分解、消息传递和失败隔离？", "answer": "任务复杂就拆成多个 Agent，每个负责一部分，最后汇总结果，失败了就重试。", "expected_level": 2}
+{"knowledge_point_id": "coding.write_tool_loop", "question": "请用文字写出一段 Agent 工具调用循环的伪代码：模型决定调哪个工具、校验参数、失败重试、把错误回传模型修正。", "answer": "写一个循环，模型说要调什么工具就调用，出错就再来一次。", "expected_level": 0}
+{"knowledge_point_id": "coding.write_tool_loop", "question": "请用文字写出一段 Agent 工具调用循环的伪代码：模型决定调哪个工具、校验参数、失败重试、把错误回传模型修正。", "answer": "while True: 模型返回工具名和参数，参数不对就把报错发给模型重新生成，最多重试 3 次。", "expected_level": 2}
+{"knowledge_point_id": "behavioral.project_conflict", "question": "讲一次你在项目中和同事在技术方案上有分歧的经历：分歧是什么，你怎么处理的，结果如何？", "answer": "没有遇到过分歧，大家都听我的。", "expected_level": 0}
+{"knowledge_point_id": "behavioral.project_conflict", "question": "讲一次你在项目中和同事在技术方案上有分歧的经历：分歧是什么，你怎么处理的，结果如何？", "answer": "有过一次，同事想用 MongoDB 我想用 PostgreSQL，后来我们讨论了一下，用了 PostgreSQL，项目成功了。", "expected_level": 2}

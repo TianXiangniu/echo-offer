@@ -17,7 +17,10 @@ const levelLabels: Record<string, string> = {
 };
 
 const rubricLabels: Record<string, string> = {
+  correctness: "概念对不对",
   mechanism: "怎么工作",
+  scenario: "场景里怎么用",
+  engineering: "边界与故障",
   boundary: "什么情况下不适合",
   tradeoff: "为什么这样选",
   failure_mode: "出问题怎么办",
@@ -32,6 +35,16 @@ const knowledgePointLabels: Record<string, string> = {
   "agent_runtime.tool_calling": "工具调用",
   "engineering.latency_diagnosis": "延迟排查",
   "engineering.output_safety": "输出安全",
+  "mcp.tool_ecosystem": "MCP 工具生态",
+  "multi_agent.orchestration": "多智能体编排",
+  "evals.observability": "评估与可观测",
+  "memory.design": "记忆设计",
+  "coding.debug_tool_call": "实战找问题",
+  "coding.write_tool_loop": "手写工具循环",
+  "design.agent_platform": "Agent 平台设计",
+  "design.rag_system": "RAG 系统设计",
+  "behavioral.project_conflict": "项目分歧处理",
+  "behavioral.failure_story": "事故复盘",
   agent_architecture: "Agent 设计",
   tool_calling: "工具调用",
   retrieval: "资料检索",
@@ -79,7 +92,7 @@ function KnowledgeList({ items, emptyText }: { items: Report["strengths"]; empty
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = { pending: "等待处理", valid: "已完成", invalid: "需要补充", rejected: "暂不展示" };
+  const labels: Record<string, string> = { pending: "等待处理", valid: "已完成", invalid: "评分无效，可重评", rejected: "暂不展示" };
   return labels[status] ?? "处理中";
 }
 
@@ -127,13 +140,14 @@ export default function ReportPage() {
 
   const retryNeeded = report.assessment_status_counts && Object.entries(report.assessment_status_counts).some(([status, count]) => count > 0 && isAssessmentRetryable(status));
   const anchoredQuestionIds = new Set<string>();
+  const followupShownQuestions = new Set<string>();
 
   return (
     <main className="mint-page mint-page--report">
       <div className="mint-shell">
         <header className="mint-header">
           <button type="button" onClick={() => router.push("/")} className="mint-brand" aria-label={`${brandCopy.name} 首页`}><span className="mint-brand-mark" aria-hidden="true">✦</span><span className="mint-brand-name">{brandCopy.name}</span></button>
-          <nav className="mint-nav" aria-label="结果导航"><span className="mint-nav-current">{brandCopy.report}</span><span className="mint-nav-note">完成后回看</span></nav>
+          <nav className="mint-nav" aria-label="结果导航"><a className="mint-nav-link" href="/skills">知识库</a><a className="mint-nav-link" href="/questions">题库</a><span className="mint-nav-current">{brandCopy.report}</span><span className="mint-nav-note">完成后回看</span></nav>
         </header>
 
         <section className="mint-report-intro" aria-label="本场结果介绍">
@@ -148,7 +162,9 @@ export default function ReportPage() {
           <div className="mint-summary-stats"><div className="mint-stat"><span className="mint-stat-label">完成题目</span><strong className="mint-stat-value">{report.completion.completed}<small> / {report.completion.total}</small></strong></div><div className="mint-stat"><span className="mint-stat-label">答得扎实</span><strong className="mint-stat-value">{report.strengths.length}</strong></div><div className="mint-stat"><span className="mint-stat-label">需要补充</span><strong className="mint-stat-value">{report.gaps.length}</strong></div><div className="mint-stat"><span className="mint-stat-label">回答完整度</span><strong className="mint-stat-value">{percent(report.coverage)}</strong></div><div className="mint-stat"><span className="mint-stat-label">重点问题完成</span><strong className="mint-stat-value">{report.anchor_coverage.answered}<small> / {report.anchor_coverage.total}</small></strong></div></div>
         </section>
 
-        {report.rubric_items && <section className="mint-report-section" aria-labelledby="answers-heading"><h2 id="answers-heading" className="mint-report-section-title">每道题的反馈</h2><div className="mint-card mint-report-card">{!report.rubric_items.length && <p className="mint-note">当前没有可以展示的回答。</p>}<div className="mint-report-list">{report.rubric_items.map((item) => { const shouldAnchor = Boolean(item.question_id) && !anchoredQuestionIds.has(item.question_id); if (item.question_id) anchoredQuestionIds.add(item.question_id); return <article key={`${item.question_id}-${item.rubric_id}`} id={shouldAnchor ? `question-${item.question_id}` : undefined} className="mint-report-item"><div className="mint-report-item-heading"><h3 className="mint-report-item-title">{labelKnowledgePoint(item.knowledge_point_id)} · {rubricLabels[item.rubric_id] ?? "回答表现"}</h3><span className="mint-level">等级 {item.level} / 4</span></div><div className="mint-report-block"><p className="mint-report-label">你的回答</p><p className="mint-quote">“{item.evidence || "没有留下可展示的回答。"}”</p></div><div className="mint-report-block"><p className="mint-report-label">{reportCopy.scoreReason}</p><p className="mint-report-reason">{reasonForLevel(item.level, item.evidence)}</p></div></article>; })}</div></div></section>}
+        {report.rubric_items && <section className="mint-report-section" aria-labelledby="answers-heading"><h2 id="answers-heading" className="mint-report-section-title">每道题的反馈</h2><div className="mint-card mint-report-card">{!report.rubric_items.length && <p className="mint-note">当前没有可以展示的回答。</p>}<div className="mint-report-list">{(() => { const groups = new Map<string, { id: string; kp: string; dims: typeof report.rubric_items }>(); for (const item of report.rubric_items) { const key = item.question_id ?? item.rubric_id; if (!groups.has(key)) groups.set(key, { id: key, kp: item.knowledge_point_id, dims: [] }); groups.get(key)!.dims.push(item); } return [...groups.values()].map((group) => { const primary = group.dims[0]; const shouldAnchor = Boolean(group.id) && group.dims.some(() => !anchoredQuestionIds.has(group.id)); if (group.dims.every(() => true) && group.id) anchoredQuestionIds.add(group.id); const followupItem = group.dims.find((d) => d.followup_question); const showFollowup = Boolean(followupItem?.followup_question) && group.id && !followupShownQuestions.has(group.id); if (showFollowup && group.id) followupShownQuestions.add(group.id); return <article key={group.id} id={shouldAnchor ? `question-${group.id}` : undefined} className="mint-report-item"><div className="mint-report-item-heading"><h3 className="mint-report-item-title"><a href={`/skills/${encodeURIComponent(group.kp)}`} className="mint-kp-link">{labelKnowledgePoint(group.kp)}</a></h3><span className="mint-question-dims">{group.dims.map((d) => <span key={d.rubric_id} className="mint-chip">{rubricLabels[d.rubric_id] ?? "回答表现"} {d.level}/4</span>)}</span></div><div className="mint-report-block"><p className="mint-report-label">你的回答</p><p className="mint-quote">“{primary.evidence || "没有留下可展示的回答。"}”</p></div>{showFollowup && followupItem && <div className="mint-report-block"><p className="mint-report-label">追问 · {followupItem.followup_question}</p><p className="mint-quote">“{followupItem.followup_answer || "没有留下追问回答。"}”</p></div>}<div className="mint-report-block"><p className="mint-report-label">{reportCopy.scoreReason}</p><p className="mint-report-reason">{primary.commentary || reasonForLevel(primary.level, primary.evidence)}</p></div></article>; }); })()}</div></div></section>}
+
+        {report.transcript && !!report.transcript.length && <section className="mint-report-section" aria-labelledby="transcript-heading"><h2 id="transcript-heading" className="mint-report-section-title">完整问答回看</h2><p className="mint-note">当时的题目和你的完整回答，含追问。供回看复盘。</p><div className="mint-card mint-report-card"><div className="mint-report-list">{report.transcript.map((item) => <article key={`transcript-${item.order}`} className="mint-report-item"><div className="mint-report-item-heading"><h3 className="mint-report-item-title">{item.order === 0 ? "项目深挖" : `题 ${item.order}`} · <a href={`/skills/${encodeURIComponent(item.knowledge_point_id)}`} className="mint-kp-link">{labelKnowledgePoint(item.knowledge_point_id)}</a></h3><span className="mint-level">{item.status === "skipped" ? "已跳过" : item.status === "explicit_unknown" ? "回答了不知道" : item.level != null ? `等级 ${item.level} / 4` : "未评估"}</span></div><p className="mint-report-reason" style={{ marginBottom: 8 }}>{item.prompt}</p><div className="mint-report-block"><p className="mint-report-label">你的完整回答</p><p className="mint-report-reason">{item.answer_text || "（本题没有作答。）"}</p></div>{item.followups.map((followup, index) => <div className="mint-report-block" key={`fu-${index}`}><p className="mint-report-label">追问 {index + 1} · {followup.question_text}</p><p className="mint-report-reason">{followup.answer_text || "（追问没有作答。）"}</p></div>)}</article>)}</div></div></section>}
 
         <section className="mint-report-section" aria-labelledby="strengths-heading"><h2 id="strengths-heading" className="mint-report-section-title">答得好的地方</h2><div className="mint-card mint-report-card"><KnowledgeList items={report.strengths} emptyText="当前还没有足够具体的回答可以归到这里。" /></div></section>
         <section className="mint-report-section" aria-labelledby="gaps-heading"><h2 id="gaps-heading" className="mint-report-section-title">可以补充的地方</h2><div className="mint-card mint-report-card"><KnowledgeList items={report.gaps} emptyText="当前没有可展示的补充方向。" /></div></section>

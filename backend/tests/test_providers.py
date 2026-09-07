@@ -77,6 +77,28 @@ def test_siliconflow_assessment_provider_parses_blind_rubric_response():
     assert len(result.rubric_items) == 4
 
 
+def test_assessment_prompt_includes_reference_facts_for_fixed_questions():
+    captured = {}
+    provider = SiliconFlowAssessmentProvider(
+        api_key="test-key",
+        model="test-model",
+        base_url="https://example.test/v1",
+        timeout_seconds=2,
+        client=mock_client(captured=captured),
+    )
+    question = next(
+        spec
+        for spec in build_question_specs()
+        if spec.knowledge_point_id == "rag.retrieval_diagnosis"
+    )
+
+    provider.assess(question, ANSWER, "submitted")
+
+    messages = captured["json"]["messages"]
+    assert "分桶" in messages[1]["content"]
+    assert "措辞不必与参考事实一致" in messages[0]["content"]
+
+
 def test_assessment_prompt_is_blind_to_resume_and_history():
     captured = {}
     provider = SiliconFlowAssessmentProvider(

@@ -7,6 +7,7 @@ import {
   getInterviewHistory,
   InterviewHistoryItem,
 } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 
 type HistoryState = {
   label: string;
@@ -14,19 +15,6 @@ type HistoryState = {
   actionLabel: string;
   href: string;
 };
-
-const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-function formatDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "时间未知" : dateFormatter.format(date);
-}
 
 function displayCount(value: number | null) {
   return value == null ? "—" : String(value);
@@ -154,7 +142,7 @@ export default function InterviewHistoryPage() {
                   <article className="mint-card mint-history-card" key={item.session_id}>
                     <div className="mint-history-card-top">
                       <div>
-                        <p className="mint-history-date">{formatDate(item.created_at)}</p>
+                        <p className="mint-history-date">{formatDateTime(item.created_at)}</p>
                         <h2 className="mint-history-card-title">{item.project_name || "未命名项目"}</h2>
                         <p className="mint-history-target">{item.target_title || "Agent 应用工程师"}</p>
                       </div>
@@ -162,6 +150,7 @@ export default function InterviewHistoryPage() {
                     </div>
                     <div className="mint-history-card-meta">
                       <div><span>答完题目</span><strong>{item.completed} / {item.total}</strong></div>
+                      <div><span>本场得分</span><strong>{item.score_100 == null ? "—" : <>{item.score_100}<small> / 100</small></>}</strong></div>
                       <div><span>答得好的地方</span><strong>{displayCount(item.strength_count)}</strong></div>
                       <div><span>待补充的地方</span><strong>{displayCount(item.gap_count)}</strong></div>
                     </div>

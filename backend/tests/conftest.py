@@ -8,6 +8,7 @@ from app.providers import (
     AssessmentProviderError,
     AssessmentResult,
     BatchAssessmentItem,
+    FollowupDecision,
     RubricAssessmentResult,
     RuleBasedAssessmentProvider,
 )
@@ -21,12 +22,47 @@ class FakeAssessmentProvider:
         failures_remaining: int = 0,
         invalid: bool = False,
         provider_error: AssessmentProviderError | None = None,
+        followup_decisions: list[bool] | None = None,
     ):
         self.failures_remaining = failures_remaining
         self.invalid = invalid
         self.provider_error = provider_error
+        self.followup_decisions = list(followup_decisions or [])
         self.calls = 0
         self.batch_calls = 0
+        self.decide_calls = 0
+        self.feedback_calls = 0
+
+    def decide_followup(
+        self,
+        question_prompt,
+        rubric_items,
+        answer_text,
+        prepared_followups,
+        previous_followups=(),
+        persona="standard",
+    ):
+        self.decide_calls += 1
+        self.last_persona = persona
+        if not self.followup_decisions:
+            return FollowupDecision(should_followup=False)
+        should = self.followup_decisions.pop(0)
+        if not should:
+            return FollowupDecision(should_followup=False)
+        return FollowupDecision(
+            should_followup=True,
+            reason="probe",
+            followup_question="你提到的方案在数据量更大时还成立吗？",
+        )
+
+    def feedback_for_answer(self, question_prompt, answer_text):
+        self.feedback_calls += 1
+        from app.providers import PracticeFeedback
+
+        return PracticeFeedback(
+            content="你把机制讲清楚了，但缺少具体场景。下次试着用一个真实案例说明。",
+            focus_hints=("如果继续追问，可能会问你怎么度量效果",),
+        )
 
     def assess(self, question, answer_text, status):
         self.calls += 1
@@ -124,8 +160,9 @@ def provider_error_ai_client(tmp_path):
     app = create_app(
         database_url,
         upload_root=tmp_path / "uploads",
+        # 超时属瞬态错误会被自动重试：全部调用都失败才能确定性地测持久失败
         assessment_provider=FakeAssessmentProvider(
-            failures_remaining=1,
+            failures_remaining=99,
             provider_error=AssessmentProviderError("provider_timeout", "模型请求超时"),
         ),
     )
@@ -193,3 +230,22 @@ def provider_error_ai_session_context(provider_error_ai_client):
 @pytest.fixture
 def invalid_ai_session_context(invalid_ai_client):
     return create_test_session(invalid_ai_client)
+
+
+class FakeVerifyingProvider(FakeAssessmentProvider):
+    """在 FakeAssessmentProvider 之上加复核：可编程每条观察的判定。"""
+
+    def __init__(self, verdicts: dict[str, dict] | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.verdicts = verdicts or {}
+        self.verify_calls = 0
+
+    def verify_batch(self, entries):
+        self.verify_calls += 1
+        return {
+            entry["rubric_id"]: self.verdicts.get(
+                entry["rubric_id"],
+                {"quote_relevant": True, "level_supported": True, "suggested_level": None},
+            )
+            for entry in entries
+        }
