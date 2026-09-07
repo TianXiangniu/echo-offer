@@ -166,6 +166,18 @@ def create_session(
         from .dialog_flow import ensure_intro
 
         ensure_intro(db, session)
+    elif mode == "graph":
+        from .interview_graph_projection import project_graph_event
+
+        project_graph_event(
+            db,
+            {
+                "session_id": session.id,
+                "graph_step_id": "session-created",
+                "event_kind": "state_updated",
+                "payload": {"stage": "planning", "current_question_index": 0},
+            },
+        )
     return {"session_id": session.id, "status": session.status, "questions": questions}
 
 def _question_response(question: InterviewQuestion) -> dict:

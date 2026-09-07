@@ -76,6 +76,8 @@ def _project_question(db: Session, session: InterviewSession, payload: Mapping) 
         raise ValueError("question_ready event requires question text")
     question_id = str(data.get("question_id") or uuid4())
     question = db.get(InterviewQuestion, question_id)
+    if question is not None and question.session_id != session.id:
+        raise ConflictError("graph question id belongs to another session")
     if question is None:
         order = data.get("order")
         if not isinstance(order, int) or order < 0:
@@ -268,6 +270,19 @@ def graph_session_view(
     """Expose graph progress in the legacy session-view shape without raw state."""
 
     state = graph_state if isinstance(graph_state, Mapping) else {}
+    persisted_questions = list(
+        db.scalars(
+            select(InterviewQuestion)
+            .where(InterviewQuestion.session_id == session.id)
+            .order_by(InterviewQuestion.order)
+        )
+    )
+    answered_ids = {
+        answer.question_id
+        for answer in db.scalars(
+            select(AnswerAttempt).where(AnswerAttempt.session_id == session.id)
+        )
+    }
     plan = [node for node in state.get("plan", []) if isinstance(node, Mapping)]
     if not plan:
         plan = [
@@ -277,14 +292,19 @@ def graph_session_view(
                 "goal": question.prompt,
                 "opening_question": question.prompt,
             }
-            for question in db.scalars(
-                select(InterviewQuestion)
-                .where(InterviewQuestion.session_id == session.id)
-                .order_by(InterviewQuestion.order)
-            )
+            for question in persisted_questions
         ]
     index = state.get("current_node_index", session.current_question_index)
     index = index if isinstance(index, int) and index >= 0 else 0
+    if not state and persisted_questions:
+        index = next(
+            (
+                question.order
+                for question in persisted_questions
+                if question.id not in answered_ids
+            ),
+            len(plan),
+        )
     route = str(state.get("route", ""))
     followups = state.get("followups_used", {})
     followups = followups if isinstance(followups, Mapping) else {}
@@ -320,7 +340,24 @@ def graph_session_view(
             "rubric_version": "graph-v1",
         }
     else:
-        current_question = None
+        persisted_current = next(
+            (question for question in persisted_questions if question.id not in answered_ids),
+            None,
+        )
+        current_question = (
+            {
+                "id": persisted_current.id,
+                "order": persisted_current.order,
+                "category": persisted_current.category,
+                "is_anchor": persisted_current.is_anchor,
+                "prompt": persisted_current.prompt,
+                "knowledge_point_id": persisted_current.knowledge_point_id,
+                "template_id": persisted_current.template_id,
+                "rubric_version": persisted_current.rubric_version,
+            }
+            if persisted_current is not None
+            else None
+        )
     status = str(state.get("status") or session.status)
     return {
         "session_id": session.id,
@@ -338,7 +375,11 @@ def graph_session_view(
                 "knowledge_point_id": f"graph.{node['id']}",
                 "template_id": None,
                 "rubric_version": "graph-v1",
-                "answered": node["status"] == "covered",
+                "answered": node["status"] == "covered"
+                or (
+                    position < len(persisted_questions)
+                    and persisted_questions[position].id in answered_ids
+                ),
             }
             for position, node in enumerate(nodes)
         ],

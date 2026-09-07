@@ -135,6 +135,8 @@ def test_answer_event_is_idempotent_and_legacy_view_is_readable(tmp_path):
     question_event = _question_event()
     with factory() as db:
         project_graph_event(db, question_event)
+        view_before_answer = get_session_view(db, session_id)
+        assert view_before_answer["current_question"]["prompt"] == "你负责了哪部分？"
         question_id = db.scalar(
             select(InterviewQuestion.id).where(
                 InterviewQuestion.session_id == session_id
@@ -163,6 +165,48 @@ def test_answer_event_is_idempotent_and_legacy_view_is_readable(tmp_path):
         assert view["mode"] == "graph"
         assert view["timeline"]
         assert any(item["role"] == "candidate" for item in view["timeline"])
+
+
+def test_question_id_cannot_be_reused_by_another_session(tmp_path):
+    factory, session_id = _session_db(tmp_path)
+    with factory() as db:
+        db.add(
+            InterviewSession(
+                id="session-2",
+                user_id="user-1",
+                resume_project_id="project-1",
+                target_id="target-1",
+                mode="graph",
+                stage="planning",
+                status="in_progress",
+            )
+        )
+        db.commit()
+        event = _question_event(step="node-1")
+        event["payload"]["question_id"] = "shared-question"
+        project_graph_event(db, event)
+        with pytest.raises(ConflictError, match="belongs to another session"):
+            project_graph_event(
+                db,
+                {
+                    **event,
+                    "session_id": "session-2",
+                    "graph_step_id": "node-2",
+                },
+            )
+
+
+def test_graph_session_creation_projects_initial_state_event(tmp_path):
+    factory, _ = _session_db(tmp_path, with_session=False)
+    with factory() as db:
+        result = create_session(db, "project-1", mode="graph")
+        from app.models import InterviewGraphEventReceipt
+
+        assert db.scalar(
+            select(InterviewGraphEventReceipt.event_kind).where(
+                InterviewGraphEventReceipt.session_id == result["session_id"]
+            )
+        ) == "state_updated"
 
 
 def test_graph_checkpoint_state_maps_to_safe_session_view(tmp_path):
