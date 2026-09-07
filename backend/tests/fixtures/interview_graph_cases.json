@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "multi_agent",
+      "project_type": "多智能体编排",
+      "verified_fact_ids": ["ma-ownership", "ma-routing", "ma-eval"],
+      "plan_kinds": ["opening", "project", "architecture", "challenge", "tradeoff", "evidence"],
+      "routes": ["ask", "advance", "ask", "advance", "wrap_up"],
+      "probes": [
+        {"references_previous_answer": true, "fact_id": "ma-ownership"},
+        {"references_previous_answer": true, "fact_id": "ma-routing"},
+        {"references_previous_answer": true, "fact_id": "ma-eval"}
+      ],
+      "normalized_questions": ["你负责哪一段", "路由如何决定", "如何评估效果"],
+      "model_calls": 6,
+      "estimated_cost_cny": 0.42
+    },
+    {
+      "id": "rag",
+      "project_type": "RAG 检索",
+      "verified_fact_ids": ["rag-retrieval", "rag-latency", "rag-citation"],
+      "plan_kinds": ["opening", "project", "architecture", "challenge", "tradeoff", "evidence"],
+      "routes": ["ask", "advance", "advance", "wrap_up"],
+      "probes": [
+        {"references_previous_answer": true, "fact_id": "rag-retrieval"},
+        {"references_previous_answer": true, "fact_id": "rag-latency"},
+        {"references_previous_answer": true, "fact_id": "rag-citation"}
+      ],
+      "normalized_questions": ["混合检索如何做", "延迟如何排查", "引用如何验证"],
+      "model_calls": 5,
+      "estimated_cost_cny": 0.31
+    },
+    {
+      "id": "transactions",
+      "project_type": "后端事务",
+      "verified_fact_ids": ["tx-boundary", "tx-idempotency", "tx-recovery"],
+      "plan_kinds": ["opening", "project", "architecture", "challenge", "tradeoff", "evidence"],
+      "routes": ["ask", "advance", "ask", "advance", "wrap_up"],
+      "probes": [
+        {"references_previous_answer": true, "fact_id": "tx-boundary"},
+        {"references_previous_answer": true, "fact_id": "tx-idempotency"},
+        {"references_previous_answer": true, "fact_id": "tx-recovery"}
+      ],
+      "normalized_questions": ["事务边界怎么定", "幂等如何保证", "失败如何恢复"],
+      "model_calls": 6,
+      "estimated_cost_cny": 0.36
+    },
+    {
+      "id": "pipeline",
+      "project_type": "数据流水线",
+      "verified_fact_ids": ["pipe-scale", "pipe-replay", "pipe-quality"],
+      "plan_kinds": ["opening", "project", "architecture", "challenge", "tradeoff", "evidence"],
+      "routes": ["ask", "advance", "advance", "wrap_up"],
+      "probes": [
+        {"references_previous_answer": true, "fact_id": "pipe-scale"},
+        {"references_previous_answer": true, "fact_id": "pipe-replay"},
+        {"references_previous_answer": true, "fact_id": "pipe-quality"}
+      ],
+      "normalized_questions": ["吞吐规模多大", "如何重放任务", "质量如何监控"],
+      "model_calls": 5,
+      "estimated_cost_cny": 0.28
+    },
+    {
+      "id": "frontend_performance",
+      "project_type": "前端性能",
+      "verified_fact_ids": ["fe-render", "fe-bundle", "fe-web-vitals"],
+      "plan_kinds": ["opening", "project", "architecture", "challenge", "tradeoff", "evidence"],
+      "routes": ["ask", "advance", "ask", "advance", "wrap_up"],
+      "probes": [
+        {"references_previous_answer": true, "fact_id": "fe-render"},
+        {"references_previous_answer": true, "fact_id": "fe-bundle"},
+        {"references_previous_answer": true, "fact_id": "fe-web-vitals"}
+      ],
+      "normalized_questions": ["渲染瓶颈在哪", "包体积如何优化", "指标如何验证"],
+      "model_calls": 6,
+      "estimated_cost_cny": 0.33
+    }
+  ]
+}

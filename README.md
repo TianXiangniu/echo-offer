@@ -2,7 +2,7 @@
 
 Agent 应用工程师 AI 模拟面试平台的本地垂直切片。
 
-当前闭环：PDF/DOCX 简历解析 → AI 识别 Agent 项目 → 用户确认项目与个性化问题 → 8 题面试（带追问与逐题练习反馈）→ AI 盲评分 → 证据报告 → 薄弱项专项练习与延迟验证。
+当前闭环：PDF/DOCX 简历解析 → AI 识别 Agent 项目 → 用户确认一个项目 → LangGraph 六节点上下文面试 → AI 盲评分 → 证据报告 → 薄弱项专项练习与延迟验证。历史 `classic` / `dialog` 会话仍可继续查看。
 
 ## 目录
 
@@ -13,7 +13,9 @@ Agent 应用工程师 AI 模拟面试平台的本地垂直切片。
 
 ## 当前范围
 
-面试保持 8 题：项目题 1～3 由简历生成，知识题 4～8 从 10 个知识点题池中动态抽取（覆盖检索诊断、查询改写、工具调用、延迟排查、输出安全、MCP 工具生态、多智能体编排、评估与可观测性、记忆设计、实战找 bug），同一场内知识点不重复，且优先避开最近 3 场用过的平行题；第 1、4、7 题是锚题。实战题（`coding.debug_tool_call`）的 Rubric 权重向"判断正确性"倾斜。项目题可由硅基流动的 `deepseek-ai/DeepSeek-V4-Flash` 根据完整简历生成，并在用户确认后保存；没有使用 AI 分析时仍可手动填写并使用固定项目题。
+默认面试使用 `mode="graph"`：Planner 先生成“项目背景 → 项目与职责 → 架构设计 → 难点与故障 → 方案取舍 → 效果与验证”六节点计划；Interviewer 每次只推进当前节点，Evidence Verifier 根据回答决定覆盖、追问或进入下一节点；终局再调用现有 Evaluator 批量评分。LangGraph 使用 `session_id` 作为 `thread_id`，SQLite checkpoint 保存执行游标，业务问答和幂等事件仍投影到现有 SQLAlchemy 表。
+
+旧流程仍保持 8 题：项目题 1～3 由简历生成，知识题 4～8 从知识点题池中动态抽取，同一场内知识点不重复。创建历史会话或回滚验证时可继续使用 `mode="dialog"`。
 
 回答提交后系统会并行发起两件事：一是**追问决策**——每题最多追问 1 次、全场最多 4 次（由程序侧硬约束），追问回答与首答一起参与盲评分；二是**逐题练习反馈**——一段不计入正式评分的白话点评和"面试官接下来可能挖什么"的提示，反馈与评分数据物理隔离。全部问题完成后由 SiliconFlow 盲评分器一次性批量返回各题的冻结 Rubric 评分，程序校验证据（引用必须逐字命中首答或追问回答）并聚合 0～4 等级。模型失败时回答仍会保存为待评估状态，不会被伪造为 0 分。
 
@@ -83,7 +85,15 @@ python -m uvicorn app.main:app --app-dir backend --reload --port 8000
 $env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8010"
 ```
 
-浏览器访问 `http://localhost:3000`；API 健康检查为 `http://localhost:8000/health`；本地 SQLite 文件为 `data/app.db`。
+当前本地开发服务的推荐启动方式（前端 3000、后端 8010）：
+
+```powershell
+$env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8010"
+python -m uvicorn app.main:app --app-dir backend --port 8010
+npm --prefix frontend run dev -- --hostname 127.0.0.1 --port 3000
+```
+
+浏览器访问 `http://localhost:3000`；推荐配置下 API 健康检查为 `http://127.0.0.1:8010/health`；本地 SQLite 文件为 `data/app.db`。
 
 ## AI 评分说明
 
@@ -91,15 +101,17 @@ $env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8010"
 
 每道题按 correctness、mechanism、scenario、engineering 四个 Rubric 项评分。程序会校验证据字符区间和回答 SHA-256，再按固定公式聚合为 0～4 等级。完成整场面试且所有未跳过的回答都有有效评估后，程序再将每道题的四项等级换算并平均为一个 0～100 的本场得分；跳过题不计入，未完成或评分失败时分数显示为暂不可用。报告和面试历史会展示这个本场得分，用户画像仍保留 0～4 能力等级，用于观察长期变化。
 
-回答过程中不会触发 AI 评分；最后一题提交后，一场面试只发起一次批量评估请求（首答与追问回答一起进入评分上下文）。页面会显示收集回答、请求模型、校验证据、生成报告四个阶段。模型超时或网络失败时，回答不会丢失，可以在完成页或报告页重新生成评估，重试不会增加回答记录。每道固定题的 Rubric 都带有参考事实作为"允许的答题要点"，评分只要求覆盖同等信息，不要求措辞一致。当前阶段暂不包含证据语义相关性验证、技术事实核验、语音面试和 AI 评分 SSE。
+回答过程中不会触发 AI 评分；最后一题提交后，一场面试只发起一次批量评估请求（首答与追问回答一起进入评分上下文）。页面会显示收集回答、请求模型、校验证据、生成报告四个阶段。模型超时或网络失败时，回答不会丢失，可以在完成页或报告页重新生成评估，重试不会增加回答记录。每道固定题的 Rubric 都带有参考事实作为"允许的答题要点"，评分只要求覆盖同等信息，不要求措辞一致。graph 面试的事件 SSE 只暴露节点状态和进度，不暴露原始 prompt 或模型响应；断线后前端会重新读取 `GET /api/sessions/{id}/graph/state`。若需回滚，可让主页创建 `mode="dialog"`，旧会话和报告无需迁移。
 
 ## 面试历史与用户画像
 
-每次开始面试都会创建新的面试记录。题目、回答、AI 评分、评分重试和报告版本都保存在 `data/app.db`，不会覆盖之前的面试。服务重启后仍可以通过历史接口读取过去的面试。
+每次开始面试都会创建新的面试记录。题目、回答、AI 评分、评分重试和报告版本都保存在 `data/app.db`，不会覆盖之前的面试。graph 的 checkpoint 位于 `data/interview-graph-checkpoints.sqlite`，服务重启后会从最近节点继续，不需要全量重跑。
 
 批量评分完成且结果有效后，系统会按技能汇总最近的面试结果，更新当前求职方向的用户画像，并生成学习建议。单场评分不读取历史画像；长期趋势分析只使用已经保存的结构化评分。
 
 每次整场评分都会记录一个独立的 `assessment_batch` 和 `operation_job`。评分阶段、完成或失败信息会写入 `operation_job_events`，因此可以通过 `GET /api/jobs/{job_id}` 查看本次分析过程和错误原因。面试历史使用 `GET /api/interviews/history`，画像摘要使用 `GET /api/profiles/{profile_id}/summary`，画像快照使用 `GET /api/profiles/{profile_id}/history`。
+
+LangGraph 和模型调用会写入本地可观测记录：`planner`、`interviewer`、`evidence_verifier`、`assessment_batch`、`assessment_verify`、`project_analysis`、`followup_decision`、`practice_feedback`。打开 `http://localhost:3000/console` 的“成本与调用”栏可按模型查看调用次数、token、延迟、成功率和人民币成本；未配置价格的调用会单独标记，不会伪造金额。
 
 浏览器访问 `http://localhost:3000/profile` 可以查看用户画像。页面会按求职方向整理能力等级、有效回答次数、变化记录和练习建议；建议状态可以直接更新。薄弱项会按"优先回看、接着练、再答几次看看"整理，并可跳回对应面试报告；记录不足时会直接说明，不把缺失记录当成答错。
 
