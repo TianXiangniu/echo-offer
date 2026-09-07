@@ -161,6 +161,11 @@ class InterviewGraphStatePayload(BaseModel):
     status: Literal["planning", "awaiting_answer", "verifying", "completed", "failed"]
     error: GraphErrorPayload | None
 
+    @model_validator(mode="after")
+    def validate_plan(self) -> "InterviewGraphStatePayload":
+        InterviewPlan(nodes=self.plan)
+        return self
+
 
 class InterviewPlanNode(BaseModel):
     model_config = ConfigDict(extra="forbid")

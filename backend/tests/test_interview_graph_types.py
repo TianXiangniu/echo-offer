@@ -233,3 +233,27 @@ def test_graph_state_rejects_followups_above_the_node_cap():
 
     with pytest.raises(ValidationError):
         InterviewGraphStatePayload.model_validate(payload)
+
+
+def test_graph_state_rejects_a_plan_without_six_nodes():
+    payload = valid_graph_state_payload()
+    payload["plan"] = payload["plan"][:1]
+
+    with pytest.raises(ValidationError):
+        InterviewGraphStatePayload.model_validate(payload)
+
+
+def test_graph_state_rejects_duplicate_plan_node_ids():
+    payload = valid_graph_state_payload()
+    payload["plan"][1]["node_id"] = payload["plan"][0]["node_id"]
+
+    with pytest.raises(ValidationError):
+        InterviewGraphStatePayload.model_validate(payload)
+
+
+def test_graph_state_rejects_plan_with_a_missing_required_kind():
+    payload = valid_graph_state_payload()
+    payload["plan"][0]["kind"] = "project"
+
+    with pytest.raises(ValidationError):
+        InterviewGraphStatePayload.model_validate(payload)
