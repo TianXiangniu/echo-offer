@@ -55,6 +55,10 @@ def _current_kind(state: InterviewGraphState) -> str:
     return str(_current_node(state).get("kind", "architecture"))
 
 
+def _current_followup_key(state: InterviewGraphState) -> str:
+    return str(_current_node(state).get("node_id", "unknown"))
+
+
 def route_after_verification(state: InterviewGraphState) -> Route:
     """Choose the next graph edge without consulting an LLM."""
 
@@ -63,8 +67,11 @@ def route_after_verification(state: InterviewGraphState) -> Route:
         return "wrap_up"
 
     if route in {"conflict", "insufficient"}:
-        kind = _current_kind(state)
-        used = state.get("followups_used", {}).get(kind, 0)
+        node = _current_node(state)
+        node_id = _current_followup_key(state)
+        legacy_kind = str(node.get("kind", "architecture"))
+        followups = state.get("followups_used", {})
+        used = followups.get(node_id, followups.get(legacy_kind, 0))
         return "ask" if used < MAX_FOLLOWUPS_PER_NODE else "advance"
 
     if route == "covered":
@@ -157,7 +164,11 @@ def build_interview_graph(
         conflicts.extend({"target": kind, "detail": conflict} for conflict in verification.conflicts)
         followups_used = dict(state.get("followups_used", {}))
         if verification.route in {"conflict", "insufficient"}:
-            followups_used[kind] = min(MAX_FOLLOWUPS_PER_NODE, followups_used.get(kind, 0) + 1)
+            followup_key = _current_followup_key(state)
+            used = followups_used.get(followup_key, followups_used.get(kind, 0))
+            followups_used[followup_key] = min(MAX_FOLLOWUPS_PER_NODE, used + 1)
+            if followup_key != kind:
+                followups_used.pop(kind, None)
 
         return {
             "route": verification.route,

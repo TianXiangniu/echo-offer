@@ -60,7 +60,7 @@ def graph_state(*, route: str, followups_used: dict[str, int], current_node_inde
 def test_verifier_route_is_deterministic(route, used, current_node_index, expected):
     state = graph_state(
         route=route,
-        followups_used={"architecture": used},
+        followups_used={"node-2": used},
         current_node_index=current_node_index,
     )
     assert route_after_verification(state) == expected
@@ -93,6 +93,22 @@ class FakeInterviewAgents:
 
     def report(self, state):
         return {"status": "reported"}
+
+
+class ScriptedInterviewAgents(FakeInterviewAgents):
+    def __init__(self, routes: list[str]):
+        self.routes = list(routes)
+
+    def verify(self, state):
+        route = self.routes.pop(0)
+        return EvidenceVerification(
+            claims=[state["last_answer"]["content"]],
+            covered_targets=[] if route != "covered" else [state["plan"][state["current_node_index"]]["kind"]],
+            missing_targets=["target"] if route == "insufficient" else [],
+            conflicts=["冲突"] if route == "conflict" else [],
+            confidence=0.8,
+            route=route,
+        )
 
 
 def initial_state() -> dict:
@@ -139,3 +155,22 @@ def test_graph_exposes_explicit_nodes_and_resumes_after_checkpoint_reopen(tmp_pa
                 assert len(result["coverage"]) == 6
     finally:
         close_checkpointer(second_checkpointer)
+
+
+@pytest.mark.parametrize("route", ["conflict", "insufficient"])
+def test_graph_enforces_followup_ceiling_on_real_route(tmp_path: Path, route: str):
+    database_path = tmp_path / f"{route}.sqlite"
+    config = graph_config(f"session-{route}")
+    checkpointer = create_checkpointer(str(database_path))
+    try:
+        graph = build_interview_graph(ScriptedInterviewAgents([route, route]), checkpointer)
+        assert "__interrupt__" in graph.invoke(initial_state(), config)
+        assert "__interrupt__" in graph.invoke(Command(resume="第一次回答"), config)
+        result = graph.invoke(Command(resume="第二次回答"), config)
+
+        assert "__interrupt__" in result
+        current = graph.get_state(config).values
+        assert current["current_node_index"] == 1
+        assert current["followups_used"]["node-0"] == 2
+    finally:
+        close_checkpointer(checkpointer)
