@@ -229,6 +229,11 @@ class SessionCreateResponse(BaseModel):
     questions: list[QuestionResponse]
 
 
+class GraphAnswerSubmission(BaseModel):
+    answer_text: str = Field(min_length=1, max_length=8_000)
+    client_submission_id: str = Field(min_length=1, max_length=120)
+
+
 class AnswerSubmission(BaseModel):
     question_id: str
     client_submission_id: str = Field(min_length=1, max_length=120)

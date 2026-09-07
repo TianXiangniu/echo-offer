@@ -1,5 +1,5 @@
 from pathlib import Path
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, UploadFile
@@ -68,9 +68,13 @@ from .schemas import (
     SessionCreate,
     SessionCreateResponse,
     SessionView,
+    GraphAnswerSubmission,
 )
 from .interview_flow import create_session, get_session_view, submit_answer
 from .interview_graph_projection import build_projected_interview_graph
+from .interview_graph_api import graph_events, graph_state, resume_graph, start_graph
+from .interview_graph_runtime import close_checkpointer, create_checkpointer
+from .interview_agents import SiliconFlowInterviewAgents
 from .dialog_flow import (
     finish_dialog_early,
     handle_dialog_answer,
@@ -154,7 +158,12 @@ def create_app(
     assessment_provider: AssessmentProvider | None = None,
     followup_provider=None,
 ) -> FastAPI:
-    app = FastAPI(title="Agent Echo API", version=WORKFLOW_VERSION)
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        yield
+        close_checkpointer(application.state.interview_graph_checkpointer)
+
+    app = FastAPI(title="Agent Echo API", version=WORKFLOW_VERSION, lifespan=lifespan)
     engine, session_factory = create_database(database_url or DEFAULT_DATABASE_URL)
     app.state.engine = engine
     app.state.session_factory = session_factory
@@ -162,6 +171,11 @@ def create_app(
     app.state.upload_root = upload_root or DEFAULT_UPLOAD_ROOT
     with session_factory() as settings_db:
         app.state.model_settings = load_model_settings(settings_db)
+    app.state.interview_graph_agents = SiliconFlowInterviewAgents(app.state.model_settings)
+    app.state.interview_graph_checkpointer = create_checkpointer(
+        str(app.state.upload_root.parent / "interview-graph-checkpoints.sqlite")
+    )
+
     with session_factory() as seed_db:
         ensure_skill_wiki_seeds(seed_db)
     default_followup = None
@@ -340,6 +354,49 @@ def create_app(
     @app.post("/api/sessions", response_model=SessionCreateResponse)
     def session(payload: SessionCreate, db: Session = Depends(get_db)):
         return create_session(db, payload.profile_id, mode=payload.mode)
+
+    @app.post("/api/sessions/{session_id}/graph/start")
+    def graph_start(session_id: str, db: Session = Depends(get_db)):
+        return start_graph(
+            db,
+            session_id,
+            graph_builder=app.state.interview_graph_builder,
+            agents=app.state.interview_graph_agents,
+            checkpointer=app.state.interview_graph_checkpointer,
+        )
+
+    @app.post("/api/sessions/{session_id}/graph/resume")
+    def graph_resume(
+        session_id: str,
+        payload: GraphAnswerSubmission,
+        db: Session = Depends(get_db),
+    ):
+        return resume_graph(
+            db,
+            session_id,
+            payload,
+            graph_builder=app.state.interview_graph_builder,
+            agents=app.state.interview_graph_agents,
+            checkpointer=app.state.interview_graph_checkpointer,
+        )
+
+    @app.get("/api/sessions/{session_id}/graph/state")
+    def graph_state_view(session_id: str, db: Session = Depends(get_db)):
+        return graph_state(
+            db,
+            session_id,
+            graph_builder=app.state.interview_graph_builder,
+            agents=app.state.interview_graph_agents,
+            checkpointer=app.state.interview_graph_checkpointer,
+        )
+
+    @app.get("/api/sessions/{session_id}/graph/events")
+    def graph_event_stream(session_id: str, db: Session = Depends(get_db)):
+        return StreamingResponse(
+            graph_events(db, session_id),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.post("/api/sessions/{session_id}/dialog/answer")
     def dialog_answer(
