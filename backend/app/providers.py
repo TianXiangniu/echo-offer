@@ -587,6 +587,17 @@ class _SiliconFlowClient:
                 created_at=now, finished_at=now,
             ))
 
+    def chat_json(self, system_prompt: str, user_prompt: str, parse, *,
+                  call_kind: str, prompt_version: str | None = None):
+        """Public JSON call seam for role-specific interview agents."""
+        self._require_api_key()
+        return self._chat(
+            self._payload(system_prompt, user_prompt, disable_thinking=True),
+            parse,
+            call_kind=call_kind,
+            prompt_version=prompt_version,
+        )
+
 
 class SiliconFlowProjectAnalysisProvider(_SiliconFlowClient):
     error_cls = ProjectAnalysisProviderError

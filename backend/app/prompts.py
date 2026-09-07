@@ -4,6 +4,8 @@
 改完再跑对比，两个数字都写进提交说明。每个提示词带版本常量。
 """
 
+import json
+
 # ---------------------------------------------------------------------------
 # 盲评分（assess）
 # ---------------------------------------------------------------------------
@@ -161,3 +163,95 @@ INTERVIEWER_SYSTEM_PROMPT = (
     "你的下一句要引用候选人上一轮回答里的具体内容，自然衔接，口语化，"
     "长度不超过 150 字符。你不评分、不打等级。必须只返回合法 JSON。"
 )
+
+# ---------------------------------------------------------------------------
+# 上下文面试图（LangGraph）
+# ---------------------------------------------------------------------------
+
+PLANNER_PROMPT_VERSION = "planner-v1"
+GRAPH_INTERVIEWER_PROMPT_VERSION = "graph-interviewer-v1"
+EVIDENCE_VERIFIER_PROMPT_VERSION = "evidence-verifier-v1"
+
+GRAPH_PLAN_TARGETS = (
+    "context_ownership",
+    "architecture_mechanism",
+    "decision_tradeoff",
+    "reliability_failure",
+    "evaluation_result",
+    "generalization",
+)
+
+
+def build_planner_prompt(context: dict) -> tuple[str, str]:
+    """Keep planner input to verified facts and bounded capability context."""
+
+    system = (
+        "你是面试计划规划器。只允许依据 verified_facts 设计六个连续问题节点；"
+        "未验证事实不得当作事实，不得评分、打等级或输出面试结论。"
+        "每个节点只负责一个目标，必须给出可执行的 opening_question。只返回 JSON。"
+    )
+    user_payload = {
+        "target_role": str(context.get("target_role", ""))[:120],
+        "capability_summary": str(context.get("capability_summary", ""))[:500],
+        "project": {
+            key: str(context.get("project", {}).get(key, ""))[:500]
+            for key in ("project_id", "name", "summary")
+        },
+        "verified_facts": [
+            {
+                key: str(fact.get(key, ""))[:500]
+                for key in ("fact_id", "summary", "source")
+            }
+            for fact in context.get("verified_facts", [])
+            if isinstance(fact, dict)
+        ],
+        "required_targets": list(GRAPH_PLAN_TARGETS),
+        "required_kinds": ["opening", "project", "architecture", "challenge", "tradeoff", "evidence"],
+    }
+    user = (
+        "输出 InterviewPlan JSON，nodes 必须恰好六个且 kind 各不相同。"
+        + chr(10)
+        + json.dumps(user_payload, ensure_ascii=False)
+    )
+    return system, user
+
+
+def build_graph_interviewer_prompt(context: dict) -> tuple[str, str]:
+    """Give the interviewer only the current node and six recent messages."""
+
+    system = (
+        "你是上下文面试官。只围绕当前计划节点追问一个问题，不得评分或打等级。"
+        "followup/clarification 必须引用上一轮回答中的具体原文；opening 可以不引用。"
+        "只返回 JSON，字段为 question、kind、rationale、referenced_quote。"
+    )
+    messages = context.get("messages", [])
+    user_payload = {
+        "current_node": context.get("current_node", {}),
+        "last_answer": context.get("last_answer"),
+        "verifier_result": context.get("verifier_result", {}),
+        "messages": list(messages[-6:]) if isinstance(messages, list) else [],
+    }
+    return system, "基于以下上下文输出下一问：" + chr(10) + json.dumps(user_payload, ensure_ascii=False)
+
+
+build_interviewer_prompt = build_graph_interviewer_prompt
+
+
+def build_evidence_verifier_prompt(context: dict) -> tuple[str, str]:
+    """Ask for evidence coverage only; routing is a closed enum."""
+
+    system = (
+        "你是事实核验器。只核对候选人回答是否覆盖 required_targets，"
+        "不得评分、打等级或补写候选人没有说过的事实。route 只能是 conflict、insufficient、covered。"
+        "只返回 JSON。"
+    )
+    user_payload = {
+        "current_question": context.get("current_question", {}),
+        "answer": context.get("answer", {}),
+        "allowed_facts": list(context.get("allowed_facts", []))[:20],
+        "required_targets": list(context.get("required_targets", []))[:20],
+    }
+    return system, "核验以下回答并输出 EvidenceVerification：" + chr(10) + json.dumps(user_payload, ensure_ascii=False)
+
+
+build_verifier_prompt = build_evidence_verifier_prompt

@@ -13,6 +13,9 @@ from sqlalchemy.orm import Session
 from .models import LlmCallTrace, utc_now
 
 
+INTERVIEW_AGENT_CALL_KINDS = frozenset({"planner", "interviewer", "evidence_verifier"})
+
+
 @dataclass(frozen=True, slots=True)
 class ModelPrice:
     model_name: str
