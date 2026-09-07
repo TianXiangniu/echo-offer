@@ -73,19 +73,7 @@ Copy-Item backend/.env.example backend/.env
 # 编辑 backend/.env，填写 SILICONFLOW_API_KEY
 ```
 
-启动后端时，从项目根目录执行：
-
-```powershell
-python -m uvicorn app.main:app --app-dir backend --reload --port 8000
-```
-
-如果后端使用 8010 端口，启动前设置：
-
-```powershell
-$env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8010"
-```
-
-当前本地开发服务的推荐启动方式（前端 3000、后端 8010）：
+启动开发服务（前端 3000、后端 8010）：
 
 ```powershell
 $env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8010"
