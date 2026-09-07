@@ -4,9 +4,10 @@ import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { ApiError, assessSession, AssessmentBatchResponse, decideFollowup, fetchQuestionFeedback, finishDialog, getSession, SessionView, skipWrapUp, submitAnswer, submitDialogAnswer, submitFollowupAnswer } from "@/lib/api";
+import { ApiError, API_BASE_URL, assessSession, AssessmentBatchResponse, decideFollowup, fetchQuestionFeedback, finishDialog, getGraphSessionState, getSession, resumeGraphSession, SessionView, skipWrapUp, startGraphSession, submitAnswer, submitDialogAnswer, submitFollowupAnswer } from "@/lib/api";
 import type { AssessmentStage } from "@/lib/assessment-flow";
 import { assessmentFailureMessage, hasUsableAssessmentResult } from "@/lib/assessment-copy";
+import { GraphSessionView, normalizeGraphState } from "@/lib/interview-graph";
 import { brandCopy, interviewCopy, statusCopy } from "@/lib/ui-copy";
 
 function newSubmissionId() {
@@ -15,11 +16,22 @@ function newSubmissionId() {
 
 type InputMode = "dialog" | "answer" | "followup" | "none";
 
+const graphStatusCopy: Record<string, string> = {
+  not_started: "未开始",
+  active: "进行中",
+  covered: "已覆盖",
+  needs_confirmation: "需要确认",
+};
+
+function isGraphView(view: SessionView | GraphSessionView | null): view is GraphSessionView {
+  return view?.mode === "graph" && "canAnswer" in view;
+}
+
 export default function InterviewPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const sessionId = params.id;
-  const [session, setSession] = useState<SessionView | null>(null);
+  const [session, setSession] = useState<SessionView | GraphSessionView | null>(null);
   const [answerText, setAnswerText] = useState("");
   const [submissionId, setSubmissionId] = useState(newSubmissionId);
   const [followupText, setFollowupText] = useState("");
@@ -34,7 +46,10 @@ export default function InterviewPage() {
 
   async function loadSession() {
     try {
-      setSession(await getSession(sessionId));
+      const current = await getSession(sessionId);
+      setSession(current.mode === "graph"
+        ? normalizeGraphState(await startGraphSession(sessionId))
+        : current);
       setError("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "无法读取这场练习。" );
@@ -45,6 +60,8 @@ export default function InterviewPage() {
 
   const question = session?.current_question;
   const isDialog = session?.mode === "dialog";
+  const isGraph = isGraphView(session);
+  const graphSession = isGraph ? session : null;
   const stage = session?.stage ?? "knowledge";
   const timeline = session?.timeline ?? [];
   const pendingFollowup = question?.followup?.status === "pending" ? question.followup : null;
@@ -53,18 +70,43 @@ export default function InterviewPage() {
   const inputMode: InputMode =
     !session || session.status === "completed"
       ? "none"
+      : isGraph
+        ? graphSession?.canAnswer ? "answer" : "none"
       : pendingFollowup
         ? "followup"
         : isDialog && (stage === "intro" || stage === "project_dialog" || stage === "wrap_up")
           ? "dialog"
           : question
             ? "answer"
-            : "none";
+        : "none";
+
+  useEffect(() => {
+    if (!isGraph) return;
+    let cancelled = false;
+    const refresh = () => getGraphSessionState(sessionId)
+      .then((state) => {
+        if (!cancelled) setSession(normalizeGraphState(state));
+      })
+      .catch(() => undefined);
+    const timer = window.setInterval(refresh, 5000);
+    const source = new EventSource(`${API_BASE_URL}/api/sessions/${sessionId}/graph/events`);
+    const onEvent = () => refresh();
+    for (const eventName of ["question_ready", "candidate_answer", "completed", "state_updated"]) {
+      source.addEventListener(eventName, onEvent);
+    }
+    source.onerror = () => source.close();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      source.close();
+    };
+  }, [isGraph, sessionId]);
 
   // 新消息自动滚到底部
   useEffect(() => {
-    const el = chatRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (chatRef.current) {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+    }
   }, [timeline.length, session?.status, assessmentStage]);
 
   function hasPendingFollowup(view: SessionView | null) {
@@ -110,6 +152,17 @@ export default function InterviewPage() {
     setBusy(true);
     setError("");
     try {
+      if (isGraph) {
+        const next = normalizeGraphState(await resumeGraphSession(sessionId, {
+          answer_text: status === "explicit_unknown" ? "不知道" : answerText,
+          client_submission_id: submissionId,
+        }));
+        setAnswerText("");
+        setSubmissionId(newSubmissionId());
+        setSession(next);
+        if (next.status === "completed") await generateAssessment();
+        return;
+      }
       await submitAnswer(sessionId, { question_id: question.id, client_submission_id: submissionId, status, answer_text: status === "explicit_unknown" ? "不知道" : answerText });
       setAnswerText("");
       setSubmissionId(newSubmissionId());
@@ -235,6 +288,8 @@ export default function InterviewPage() {
   const stageLabel =
     isDialog
       ? ({ intro: "自我介绍", project_dialog: "项目深挖", knowledge: "知识环节", wrap_up: "反问环节", completed: "面试完成" }[stage] ?? "")
+      : isGraph
+        ? `上下文面试 · 已答 ${completedCount}/${totalCount}`
       : `知识环节 · 已答 ${completedCount}/${totalCount}`;
   const showTyping = busy && (inputMode === "dialog" || stage === "project_dialog");
 
@@ -248,6 +303,27 @@ export default function InterviewPage() {
       </header>
 
       <div className="mint-stage-progress" aria-label="面试进度"><span style={{ width: `${totalCount ? Math.round((completedCount / totalCount) * 100) : 0}%` }} /></div>
+
+      {isGraph && graphSession && (
+        <section className="mint-graph-map" aria-label="上下文面试地图">
+          <div className="mint-graph-map-head">
+            <div>
+              <p className="mint-graph-kicker">上下文面试地图</p>
+              <h2>沿着一个项目，把答案讲完整</h2>
+            </div>
+            <span>{graphSession.progress.completed}/{graphSession.progress.total} 节点</span>
+          </div>
+          <div className="mint-graph-nodes">
+            {graphSession.nodes.map((node, index) => (
+              <div className={`mint-graph-node is-${node.status}`} key={node.id}>
+                <span className="mint-graph-node-index">0{index + 1}</span>
+                <strong>{node.label}</strong>
+                <small>{graphStatusCopy[node.status] || node.status}</small>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {error && <div className="mint-alert" role="alert">{error}</div>}
 

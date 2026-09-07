@@ -6,14 +6,17 @@ import { useRouter } from "next/navigation";
 
 import {
   AgentProjectAnalysis,
+  analyzeProjectCandidates,
   analyzeAgentProjectStream,
   createProfile,
   createSession,
   parseResume,
   ProjectInput,
+  ProjectCandidate,
   ProjectQuestionInput,
   ResumeParseResponse,
 } from "@/lib/api";
+import { canStartInterview, getHomeStep } from "@/lib/home-flow";
 import { brandCopy, getMissingInformationPrompts, homeCopy } from "@/lib/ui-copy";
 
 const emptyProject: ProjectInput = {
@@ -38,7 +41,7 @@ const fields: Array<{ key: keyof ProjectInput; hint: string }> = [
   { key: "quantified_results", hint: "速度、效果、规模等结果，能量化就写出来" },
 ];
 
-const preparationSteps = ["上传简历", "确认项目", "开始练习"];
+const preparationSteps = ["上传简历", "AI 整理项目", "确认并开始面试"];
 
 export default function HomePage() {
   const router = useRouter();
@@ -48,6 +51,8 @@ export default function HomePage() {
   const [project, setProject] = useState<ProjectInput>(emptyProject);
   const [analysisId, setAnalysisId] = useState<string>();
   const [analysisResult, setAnalysisResult] = useState<AgentProjectAnalysis>();
+  const [candidates, setCandidates] = useState<ProjectCandidate[]>([]);
+  const [selectedCandidate, setSelectedCandidate] = useState<ProjectCandidate>();
   const [projectQuestions, setProjectQuestions] = useState<ProjectQuestionInput[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -59,6 +64,8 @@ export default function HomePage() {
     setAnalysisId(undefined);
     setAnalysisResult(undefined);
     setProjectQuestions([]);
+    setCandidates([]);
+    setSelectedCandidate(undefined);
     setAnalysisStage("等待开始");
   }
 
@@ -84,17 +91,6 @@ export default function HomePage() {
     }
   }
 
-  function switchToManualResume() {
-    setResumeId(undefined);
-    setResumeSource(undefined);
-    clearAnalysis();
-  }
-
-  function handleResumeTextChange(value: string) {
-    setResumeText(value);
-    if (analysisResult) clearAnalysis();
-  }
-
   async function handleAnalyze() {
     if (!resumeId || !resumeText.trim()) {
       setError("请先上传 PDF 或 DOCX 简历，再进行整理。");
@@ -103,10 +99,21 @@ export default function HomePage() {
     if (!window.confirm("完整简历内容将发送给硅基流动，用来整理项目，是否继续？")) return;
 
     setAnalyzing(true);
-    setAnalysisStage("正在整理项目内容…");
     setError("");
     try {
-      const result = await analyzeAgentProjectStream(resumeId, resumeText, (event) => {
+      if (!candidates.length) {
+        setAnalysisStage("正在识别简历项目…");
+        const result = await analyzeProjectCandidates(resumeId, resumeText);
+        setCandidates(result.candidates);
+        setAnalysisStage("请选择本场面试项目");
+        return;
+      }
+      if (!selectedCandidate) {
+        setError("请选择一个项目，再生成面试内容。");
+        return;
+      }
+      setAnalysisStage("正在整理选中项目…");
+      const result = await analyzeAgentProjectStream(resumeId, resumeText, selectedCandidate.project_name, (event) => {
         if (event.event !== "stage") return;
         const messages: Record<string, string> = {
           received: "已收到简历内容…",
@@ -136,6 +143,10 @@ export default function HomePage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canStartInterview({ hasResume: Boolean(resumeId && resumeText.trim()), hasAnalysis: Boolean(analysisResult) })) {
+      setError("请先完成 AI 项目整理，再开始面试。");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -146,7 +157,7 @@ export default function HomePage() {
         project,
         project_questions: analysisResult ? projectQuestions : undefined,
       });
-      const session = await createSession(profile.profile_id, "dialog");
+      const session = await createSession(profile.profile_id, "graph");
       router.push(`/interview/${session.session_id}`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建面试失败，请稍后重试。");
@@ -155,7 +166,8 @@ export default function HomePage() {
     }
   }
 
-  const activeStep = analysisResult ? 1 : resumeText.trim() ? 0 : 0;
+  const step = getHomeStep({ hasResume: Boolean(resumeId && resumeText.trim()), hasAnalysis: Boolean(analysisResult) });
+  const activeStep = step - 1;
   const supplementPrompts = analysisResult ? getMissingInformationPrompts(analysisResult.missing_information) : [];
 
   return (
@@ -214,7 +226,6 @@ export default function HomePage() {
                 {resumeSource && !uploading && (
                   <p className="mint-file-status">
                     {resumeSource.original_filename} · {resumeSource.unit_count}{resumeSource.source_type === "pdf" ? " 页" : " 个文本块"} · {resumeSource.character_count} 字符
-                    <button type="button" onClick={switchToManualResume} disabled={analyzing || busy} className="mint-button mint-button--quiet">改为手动编辑</button>
                   </p>
                 )}
               </div>
@@ -225,33 +236,33 @@ export default function HomePage() {
             </div>
             {uploading && <p className="mint-note">正在读取文本，请稍候…</p>}
             {resumeSource?.warnings.map((warning) => <p key={warning} className="mint-note">提示：{warning}</p>)}
+            {resumeSource && (
+              <details className="mint-card mint-edit-card">
+                <summary className="mint-report-label">查看或修改解析出的简历文字</summary>
+                <textarea value={resumeText} onChange={(event) => { setResumeText(event.target.value); if (analysisResult) clearAnalysis(); }} disabled={analyzing || uploading || busy} className="mint-textarea" aria-label="简历内容" />
+              </details>
+            )}
           </section>
 
-          <section className="mint-section" aria-labelledby="resume-text-heading">
+          {step === 2 && <section className="mint-section" aria-labelledby="analysis-heading">
             <div className="mint-section-heading">
-              <h2 id="resume-text-heading" className="mint-section-title">第二步：检查文字</h2>
-            </div>
-            <div className="mint-card mint-edit-card">
-              <p className="mint-edit-intro">这里显示从文件中读出的文字，你可以直接修改，也可以重新粘贴。</p>
-              <textarea value={resumeText} onChange={(event) => handleResumeTextChange(event.target.value)} disabled={analyzing || uploading || busy} placeholder="上传后这里显示简历文字，可手动修改；直接粘贴仅用于检查，自动整理需上传文件……" className="mint-textarea" aria-label="简历内容" />
-            </div>
-          </section>
-
-          <section className="mint-section" aria-labelledby="analysis-heading">
-            <div className="mint-section-heading">
-              <h2 id="analysis-heading" className="mint-section-title">第三步（可选）：让 AI 整理项目</h2>
+              <h2 id="analysis-heading" className="mint-section-title">第二步：让 AI 整理项目</h2>
             </div>
             <div className="mint-card mint-upload-card">
-              <div className="mint-upload-main"><p className="mint-upload-title">{homeCopy.analyze}</p><p className="mint-upload-hint">整理后你可以逐项修改，再决定要不要开始练习。</p></div>
-              <button type="button" onClick={handleAnalyze} disabled={!resumeId || !resumeText.trim() || analyzing || busy || uploading} className="mint-button mint-button--primary">{analyzing ? "正在整理…" : analysisResult ? homeCopy.analyzeAgain : "开始整理"}</button>
+              <div className="mint-upload-main"><p className="mint-upload-title">{candidates.length ? "选择本场面试项目" : homeCopy.analyze}</p><p className="mint-upload-hint">{candidates.length ? "选中后，AI 只为这个项目生成面试内容。" : "AI 会先识别简历中的候选项目，再由你选择一个。"}</p></div>
+              <button type="button" onClick={handleAnalyze} disabled={!resumeId || !resumeText.trim() || analyzing || busy || uploading || (candidates.length > 0 && !selectedCandidate)} className="mint-button mint-button--primary">{analyzing ? "正在整理…" : candidates.length ? "生成面试内容" : "识别项目"}</button>
             </div>
             {analyzing && <div className="mint-progress" aria-live="polite"><div className="mint-progress-line" /><span className="mint-progress-label">{analysisStage}</span></div>}
-            {!resumeId && <p className="mint-note">上传 PDF 或 DOCX 后可以自动整理；直接粘贴文字暂不支持自动整理，请到下方手动填写项目内容。</p>}
-          </section>
+            {candidates.length > 0 && <div className="mint-analysis-list">
+              {candidates.map((candidate) => <button type="button" key={candidate.project_name} onClick={() => setSelectedCandidate(candidate)} className={`mint-card mint-analysis-card ${selectedCandidate?.project_name === candidate.project_name ? "is-selected" : ""}`}>
+                <p className="mint-analysis-title">{candidate.project_name}</p><p className="mint-note">{candidate.summary}</p><p className="mint-note">{candidate.tech_stack}</p><p className="mint-note">{candidate.selection_reason}</p>
+              </button>)}
+            </div>}
+          </section>}
 
           {analysisResult && (
-            <section className="mint-section" aria-labelledby="analysis-result-heading">
-              <h2 id="analysis-result-heading" className="mint-section-title">AI 整理出的项目</h2>
+            <section className="mint-section" aria-labelledby="project-heading">
+              <div className="mint-section-heading"><h2 id="project-heading" className="mint-section-title">第三步：确认项目，开始面试</h2></div>
               <div className="mint-card mint-analysis-card">
                 <div className="mint-analysis-summary"><div><p className="mint-analysis-title">{project.project_name || "未命名项目"}</p><p className="mint-note">{analysisResult.selection_reason}</p></div><span className="mint-chip">可以继续修改</span></div>
                 {supplementPrompts.length > 0 && (
@@ -274,28 +285,24 @@ export default function HomePage() {
                     </div>
                   ))}
                 </div>
-                {analysisResult.evidence.length > 0 && <details><summary className="mint-report-label">看看简历里对应的内容</summary>{analysisResult.evidence.map((item, index) => <p key={index} className="mint-note"><strong>{homeCopy.projectFields[item.field]}</strong>：{item.quote}</p>)}</details>}
+                {analysisResult.evidence.length > 0 && <details><summary className="mint-report-label">看看简历里对应的内容</summary>{analysisResult.evidence.map((item, index) => <p key={index} className="mint-note"><strong>{homeCopy.projectFields[item.field as keyof typeof homeCopy.projectFields] || item.field}</strong>：{item.quote}</p>)}</details>}
               </div>
+              <div className="mint-card mint-edit-card">
+                <p className="mint-edit-intro">确认这份 AI 整理结果。这里的内容会决定本场面试的追问方向。</p>
+                <div className="mint-field-grid">
+                  {fields.map((field) => (
+                    <label key={field.key} className={`mint-field ${field.key === "project_name" ? "mint-field--wide" : ""}`}>
+                      <span className="mint-field-label">{homeCopy.projectFields[field.key]}</span>
+                      <textarea required={field.key !== "quantified_results"} rows={field.key === "project_name" ? 1 : 3} value={project[field.key]} onChange={(event) => setProject((current) => ({ ...current, [field.key]: event.target.value }))} disabled={busy} placeholder={field.hint} className="mint-textarea" />
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="mint-actions"><p className="mint-note">确认后的项目内容会进入这场练习。</p><button type="submit" aria-label="确认内容，开始面试" disabled={busy} className="mint-button mint-button--primary">{busy ? "正在保存…" : "确认项目并开始面试"}</button></div>
             </section>
           )}
 
-          <section className="mint-section" aria-labelledby="project-heading">
-            <div className="mint-section-heading"><h2 id="project-heading" className="mint-section-title">第四步：确认项目，开始面试</h2></div>
-            <div className="mint-card mint-edit-card">
-              <p className="mint-edit-intro">不确定的地方可以先留空再回来补，面试题会围绕这里的内容展开。</p>
-              <div className="mint-field-grid">
-                {fields.map((field) => (
-                  <label key={field.key} className={`mint-field ${field.key === "project_name" ? "mint-field--wide" : ""}`}>
-                    <span className="mint-field-label">{homeCopy.projectFields[field.key]}</span>
-                    <textarea required={field.key !== "quantified_results"} rows={field.key === "project_name" ? 1 : 3} value={project[field.key]} onChange={(event) => setProject((current) => ({ ...current, [field.key]: event.target.value }))} disabled={analyzing || busy} placeholder={field.hint} className="mint-textarea" />
-                  </label>
-                ))}
-              </div>
-            </div>
-          </section>
-
           {error && <p className="mint-alert" role="alert">{error}</p>}
-          <div className="mint-actions"><p className="mint-note">确认后的项目内容会进入这场练习。</p><button type="submit" aria-label="确认内容，开始面试" disabled={busy || uploading || analyzing} className="mint-button mint-button--primary">{busy ? "正在保存…" : homeCopy.confirm}</button></div>
           <p className="mint-footer">回答会先保存，全部答完后再一起生成结果。自动整理时，完整简历内容会发送给硅基流动。</p>
         </form>
       </div>

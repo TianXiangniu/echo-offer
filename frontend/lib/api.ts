@@ -1,4 +1,5 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const API_BASE_URL = API_BASE;
 
 export type ProjectInput = {
   project_name: string;
@@ -117,12 +118,24 @@ export type AgentProjectAnalysis = {
   project: ProjectInput & ProjectAnalysisDetails;
   selection_reason: string;
   confidence: number;
-  evidence: Array<{ field: keyof ProjectInput; quote: string }>;
+  evidence: Array<{ field: string; quote: string }>;
   questions: ProjectQuestionInput[];
   missing_information: MissingInformationItem[];
   facts: ProjectFact[];
   question_chain: ProjectQuestionDetail[];
 };
+
+export type ProjectCandidate = {
+  project_name: string;
+  summary: string;
+  tech_stack: string;
+  responsibilities: string;
+  selection_reason: string;
+  confidence: number;
+  evidence: Array<{ field: keyof ProjectInput; quote: string }>;
+};
+
+export type ProjectCandidatesResponse = { candidates: ProjectCandidate[] };
 
 export type AgentAnalysisStreamEvent =
   | { event: "stage"; data: { stage: "received" | "analyzing" | "validating" | "completed"; message: string } }
@@ -186,6 +199,25 @@ export type SessionView = {
       feedback?: PracticeFeedbackView | null;
     }
   >;
+  progress: { completed: number; total: number };
+  timeline: DialogMessage[];
+};
+
+export type GraphPlanNode = {
+  id: string;
+  kind: string;
+  label: string;
+  status: "not_started" | "active" | "covered" | "needs_confirmation" | string;
+};
+
+export type GraphSessionResponse = {
+  session_id: string;
+  status: string;
+  mode: "graph";
+  stage: string;
+  current_question: (Question & { answered?: boolean }) | null;
+  questions: Question[];
+  nodes: GraphPlanNode[];
   progress: { completed: number; total: number };
   timeline: DialogMessage[];
 };
@@ -371,6 +403,15 @@ export type ModelConnectionTestResponse = {
   error_code?: string | null;
 };
 
+export type ObservabilitySummary = {
+  call_count: number;
+  known_cost_cny: string;
+  unpriced_call_count: number;
+  total_tokens: number;
+  success_rate: number | null;
+  average_latency_ms: number | null;
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -456,13 +497,14 @@ export function parseResume(file: File) {
 export function analyzeAgentProject(resumeId: string, resumeText: string) {
   return request<AgentProjectAnalysis>(
     "/api/resumes/" + resumeId + "/agent-project-analysis",
-    { method: "POST", body: JSON.stringify({ resume_text: resumeText }) },
+    { method: "POST", body: JSON.stringify({ resume_text: resumeText, selected_project_name: "" }) },
   );
 }
 
 export async function analyzeAgentProjectStream(
   resumeId: string,
   resumeText: string,
+  selectedProjectName: string,
   onEvent: (event: AgentAnalysisStreamEvent) => void,
 ): Promise<AgentProjectAnalysis> {
   let response: Response;
@@ -475,7 +517,7 @@ export async function analyzeAgentProjectStream(
           "Content-Type": "application/json",
           Accept: "text/event-stream",
         },
-        body: JSON.stringify({ resume_text: resumeText }),
+        body: JSON.stringify({ resume_text: resumeText, selected_project_name: selectedProjectName }),
       },
     );
   } catch {
@@ -533,6 +575,12 @@ export async function analyzeAgentProjectStream(
   return result;
 }
 
+export function analyzeProjectCandidates(resumeId: string, resumeText: string) {
+  return request<ProjectCandidatesResponse>(`/api/resumes/${resumeId}/agent-project-candidates`, {
+    method: "POST", body: JSON.stringify({ resume_text: resumeText }),
+  });
+}
+
 export function createProfile(input: {
   resume_text: string;
   resume_id?: string;
@@ -543,11 +591,29 @@ export function createProfile(input: {
   return request<ProfileResponse>("/api/profile", { method: "POST", body: JSON.stringify(input) });
 }
 
-export function createSession(profileId: string, mode: "classic" | "dialog" = "dialog") {
+export function createSession(profileId: string, mode: "classic" | "dialog" | "graph" = "dialog") {
   return request<SessionResponse>("/api/sessions", {
     method: "POST",
     body: JSON.stringify({ profile_id: profileId, mode }),
   });
+}
+
+export function startGraphSession(sessionId: string) {
+  return request<GraphSessionResponse>(`/api/sessions/${sessionId}/graph/start`, { method: "POST" });
+}
+
+export function resumeGraphSession(
+  sessionId: string,
+  input: { answer_text: string; client_submission_id: string },
+) {
+  return request<GraphSessionResponse>(`/api/sessions/${sessionId}/graph/resume`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function getGraphSessionState(sessionId: string) {
+  return request<GraphSessionResponse>(`/api/sessions/${sessionId}/graph/state`);
 }
 
 export function getSession(sessionId: string) {
@@ -697,6 +763,10 @@ export function updateModelSettings(input: ModelSettingsUpdate) {
     method: "PUT",
     body: JSON.stringify(body),
   });
+}
+
+export function getObservabilitySummary() {
+  return request<ObservabilitySummary>("/api/observability/summary");
 }
 
 export function testModelConnection() {

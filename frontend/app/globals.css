@@ -487,6 +487,7 @@ body { background: var(--color-mint-50); color: var(--color-ink); font-family: v
 .mint-section-aside { color: var(--color-muted); font-size: 12px; }
 .mint-card { border: 1px solid var(--color-line); border-radius: 22px; background: var(--color-cream); box-shadow: 0 12px 34px rgb(24 61 50 / 5%); }
 .mint-upload-card { display: flex; align-items: center; gap: 18px; padding: 25px; }
+.mint-analysis-card.is-selected { border: 2px solid var(--color-coral); }
 .mint-upload-icon { display: grid; width: 48px; height: 48px; flex: 0 0 auto; place-items: center; border-radius: 15px; background: var(--color-mint-100); color: var(--color-forest-soft); font-size: 20px; }
 .mint-upload-main { display: grid; gap: 6px; min-width: 0; flex: 1; }
 .mint-upload-title { margin: 0; color: var(--color-forest); font-size: 16px; font-weight: 700; }
@@ -872,26 +873,44 @@ body { background: var(--color-mint-50); color: var(--color-ink); font-family: v
 .mint-evidence-head { margin: 0; font-size: 13px; color: var(--color-forest); font-weight: 600; }
 
 /* ===== 对话式面试：暗色紧凑聊天流 ===== */
-.mint-page--interview { background: #10161f; min-height: 100vh; padding-bottom: 150px; }
+.mint-page--interview { background: radial-gradient(circle at 50% -20%, #20334a 0, #10161f 46%); min-height: 100vh; overflow: visible; padding-bottom: 190px; }
 .mint-page--interview .mint-header { background: transparent; border-bottom: 1px solid #2a3646; }
 .mint-page--interview .mint-brand { color: #e6ecf2; }
 .mint-page--interview .mint-brand-mark { color: #6fbf95; }
 .mint-page--interview .mint-nav-current { color: #e6ecf2; }
 .mint-page--interview .mint-nav-note { color: #8fa0b3; }
 .mint-page--interview .mint-alert { background: #2a1a18; border: 1px solid #4a2a22; color: #e8a06a; max-width: 720px; margin: 12px auto; }
-.mint-stage-progress { max-width: 720px; margin: 16px auto 8px; height: 3px; border-radius: 99px; background: #2a3646; overflow: hidden; }
+.mint-stage-progress { max-width: 980px; margin: 26px auto 14px; height: 5px; border-radius: 99px; background: #2a3646; overflow: hidden; box-shadow: 0 0 28px rgba(111,191,149,.12); }
 .mint-stage-progress span { display: block; height: 100%; border-radius: 99px; background: #6fbf95; }
-.mint-chat-scroll { max-width: 720px; margin: 0 auto; padding: 8px 24px 20px; }
-.mint-chat { display: grid; gap: 10px; }
-.mint-msg { display: grid; grid-template-columns: 30px 1fr; gap: 9px; animation: mintRise .3s ease both; }
-.mint-msg.self { grid-template-columns: 1fr 30px; }
+.mint-graph-map { max-width: 980px; margin: 0 auto 4px; padding: 0 24px 8px; }
+.mint-graph-map-head { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 12px; color: #e6ecf2; }
+.mint-graph-map-head h2 { margin: 4px 0 0; font: 600 17px/1.35 var(--font-body); letter-spacing: -.02em; }
+.mint-graph-map-head > span { color: #8fa0b3; font: 12px var(--font-mono); }
+.mint-graph-kicker { margin: 0; color: #6fbf95; font: 10px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; }
+.mint-graph-nodes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; }
+.mint-graph-node { position: relative; display: grid; gap: 5px; min-height: 76px; padding: 11px 10px; border: 1px solid #2a3646; border-radius: 12px; background: rgb(26 35 48 / 70%); color: #8fa0b3; }
+.mint-graph-node::after { position: absolute; top: 20px; right: -8px; width: 8px; border-top: 1px solid #35465b; content: ""; }
+.mint-graph-node:last-child::after { display: none; }
+.mint-graph-node-index { color: #607287; font: 10px var(--font-mono); }
+.mint-graph-node strong { color: #cbd7e4; font-size: 12px; font-weight: 600; line-height: 1.35; }
+.mint-graph-node small { color: #718298; font-size: 10px; }
+.mint-graph-node.is-active { border-color: #6fbf95; background: #20382f; box-shadow: 0 0 0 1px rgb(111 191 149 / 18%); }
+.mint-graph-node.is-active strong, .mint-graph-node.is-covered strong { color: #e6f3e9; }
+.mint-graph-node.is-covered { background: #1d2b31; }
+.mint-graph-node.is-covered .mint-graph-node-index, .mint-graph-node.is-covered small { color: #6fbf95; }
+.mint-graph-node.is-needs_confirmation { border-color: #b98754; background: #32291e; }
+.mint-graph-node.is-needs_confirmation small { color: #e8a06a; }
+.mint-chat-scroll { max-width: 980px; margin: 0 auto; padding: 26px 24px 28px; min-height: calc(100vh - 310px); }
+.mint-page--interview .mint-chat { display: grid; gap: 22px; max-height: none; overflow: visible; }
+.mint-msg { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 13px; animation: mintRise .3s ease both; }
+.mint-msg.self { grid-template-columns: 1fr 38px; }
 .mint-msg.self .mint-ava { grid-column: 2; }
 .mint-msg.self .mint-msg-body { grid-column: 1; justify-items: end; }
 @keyframes mintRise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-.mint-ava { width: 30px; height: 30px; border-radius: 99px; background: #24463a; color: #dcefe4; display: flex; align-items: center; justify-content: center; font-size: 13px; }
-.mint-msg-body { display: grid; gap: 8px; justify-items: start; }
-.mint-who { font-size: 11px; color: #8fa0b3; padding: 0 4px; }
-.mint-bubble { border-radius: 12px; border-bottom-left-radius: 4px; padding: 8px 12px; font-size: 13.5px; line-height: 1.7; max-width: 560px; background: #1e2a3a; color: #e6ecf2; white-space: pre-wrap; }
+.mint-ava { width: 38px; height: 38px; border-radius: 12px; background: #24463a; color: #dcefe4; display: flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 0 8px 18px rgba(0,0,0,.18); }
+.mint-msg-body { display: grid; gap: 9px; justify-items: start; }
+.mint-who { font-size: 12px; color: #9fb1c4; padding: 0 3px; letter-spacing: .04em; }
+.mint-bubble { border-radius: 16px; border-bottom-left-radius: 4px; padding: 17px 20px; font-size: 16px; line-height: 1.8; max-width: 760px; background: linear-gradient(135deg,#223149,#1c2839); color: #edf3f9; white-space: pre-wrap; box-shadow: 0 12px 28px rgba(0,0,0,.14); }
 .mint-bubble.is-self { background: #24463a; color: #dcefe4; border-radius: 12px; border-bottom-right-radius: 4px; }
 .mint-coach { display: flex; gap: 8px; align-items: flex-start; background: #2a2318; color: #c9a97a; border-radius: 10px; padding: 8px 12px; font-size: 12.5px; max-width: 560px; }
 .mint-coach-ico { color: #e8a06a; }
@@ -907,9 +926,9 @@ body { background: var(--color-mint-50); color: var(--color-ink); font-family: v
 .mint-page--interview .mint-complete-progress { background: #10161f; border: 1px solid #2a3646; border-radius: 12px; padding: 14px; margin-top: 14px; }
 .mint-page--interview .mint-retry-box { background: #2a1a18; border: 1px solid #4a2a22; border-radius: 12px; padding: 14px; margin-top: 14px; color: #e8a06a; text-align: left; }
 .mint-page--interview .mint-retry-box .mint-note { color: #c9a97a; }
-.mint-dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: #10161f; border-top: 1px solid #2a3646; padding: 14px 24px; }
-.mint-dock-inner { max-width: 720px; margin: 0 auto; background: #1a2330; border: 1px solid #2a3646; border-radius: 18px; padding: 10px 14px 8px; }
-.mint-dock-textarea { width: 100%; border: none; outline: none; resize: none; background: transparent; color: #e6ecf2; font: 14px/1.6 var(--font-body); min-height: 22px; }
+.mint-dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: linear-gradient(transparent,#10161f 28%); border: none; padding: 36px 24px 20px; }
+.mint-dock-inner { max-width: 980px; margin: 0 auto; background: #182334; border: 1px solid #35465b; border-radius: 18px; padding: 16px 18px 10px; box-shadow: 0 -8px 42px rgba(0,0,0,.28); }
+.mint-dock-textarea { width: 100%; border: none; outline: none; resize: none; background: transparent; color: #e6ecf2; font: 16px/1.65 var(--font-body); min-height: 48px; }
 .mint-dock-textarea::placeholder { color: #8fa0b3; }
 .mint-dock-row { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
 .mint-dock-hints { display: flex; gap: 14px; align-items: center; }
@@ -934,6 +953,12 @@ button.mint-filter { border: none; cursor: pointer; font: inherit; }
 .mint-phase-tag[data-phase="项目"] { background: #e7eefb; color: #345d9d; }
 .mint-phase-tag[data-phase="手撕"] { background: #fdeeda; color: #a05a1c; }
 .mint-phase-tag[data-phase="HR"] { background: #f1e9fa; color: #6f42a8; }
+
+@media (max-width: 820px) {
+  .mint-graph-map { padding-inline: 16px; }
+  .mint-graph-nodes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .mint-graph-node::after { display: none; }
+}
 
 /* ===== 模型设置弹窗（暗色） ===== */
 .mint-nav-gear { border: 1px solid #2a3646; background: #1a2330; color: #8fa0b3; border-radius: 99px; padding: 4px 12px; font-size: 12px; cursor: pointer; margin-right: 10px; }
