@@ -44,8 +44,25 @@ def test_interviewer_prompt_contains_only_recent_context():
 def test_interviewer_must_reference_last_answer_for_followup():
     with pytest.raises(ValueError, match="last answer reference"):
         parse_interviewer_turn(
-            '{"question":"泛化问题", "kind":"probe", "referenced_quote":""}'
+            '{"question":"泛化问题", "kind":"followup", "referenced_quote":""}'
         )
+
+
+def test_interviewer_rejects_unknown_kind_and_ungrounded_reference():
+    with pytest.raises(ValueError, match="unsupported interviewer kind"):
+        parse_interviewer_turn(
+            '{"question":"问题", "kind":"probe", "referenced_quote":"回答"}'
+        )
+    with pytest.raises(ValueError, match="referenced quote must come from last answer"):
+        parse_interviewer_turn(
+            '{"question":"怎么验证？", "kind":"followup", "referenced_quote":"模型很快"}',
+            last_answer="我们通过缓存降低了延迟。",
+        )
+    parsed = parse_interviewer_turn(
+        '{"question":"怎么验证？", "kind":"followup", "referenced_quote":"缓存降低了延迟"}',
+        last_answer="我们通过缓存降低了延迟。",
+    )
+    assert parsed.referenced_quote == "缓存降低了延迟"
 
 
 def test_verifier_rejects_unknown_route_and_plan_parser_limits_text():

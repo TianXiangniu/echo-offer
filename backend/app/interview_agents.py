@@ -57,6 +57,16 @@ def _compact(value: object, limit: int) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
+def _context_text(value: object) -> str:
+    if isinstance(value, Mapping):
+        for key in ("content", "text", "answer", "summary"):
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                return item
+        return ""
+    return value if isinstance(value, str) else ""
+
+
 def parse_interview_plan(content: object) -> InterviewPlan:
     payload = _object(content)
     raw_nodes = payload.get("nodes")
@@ -75,17 +85,32 @@ def parse_interview_plan(content: object) -> InterviewPlan:
     return InterviewPlan.model_validate({"nodes": nodes})
 
 
-def parse_interviewer_turn(content: object) -> InterviewerTurnOutput:
+def parse_interviewer_turn(
+    content: object,
+    *,
+    last_answer: object = None,
+    visible_messages: object = None,
+) -> InterviewerTurnOutput:
     payload = _object(content)
     question = _compact(payload.get("question"), 150)
     if not question:
         raise ValueError("interviewer output missing question")
     kind = payload.get("kind", "followup")
     if kind not in {"opening", "followup", "clarification", "wrap_up"}:
-        kind = "followup"
+        raise ValueError("unsupported interviewer kind")
     referenced_quote = _compact(payload.get("referenced_quote"), 200)
     if kind in {"followup", "clarification"} and not referenced_quote:
         raise ValueError("last answer reference is required for follow-up")
+    if kind in {"followup", "clarification"}:
+        messages = visible_messages if isinstance(visible_messages, list) else []
+        source = " ".join(
+            _context_text(item)
+            for item in [_context_text(last_answer), *messages]
+            if _context_text(item)
+        )
+        quote = " ".join(referenced_quote.split())
+        if not source or quote not in " ".join(source.split()):
+            raise ValueError("referenced quote must come from last answer")
     return InterviewerTurnOutput(
         question=question,
         kind=kind,
@@ -168,7 +193,13 @@ class SiliconFlowInterviewAgents(PlannerAgent, InterviewerAgent, EvidenceVerifie
                           kind="planner", version=PLANNER_PROMPT_VERSION)
 
     def ask(self, context: Mapping) -> InterviewerTurnOutput:
-        return self._call(*build_graph_interviewer_prompt(_interviewer_context(context)), parse_interviewer_turn,
+        interviewer_context = _interviewer_context(context)
+        parser = lambda content: parse_interviewer_turn(
+            content,
+            last_answer=interviewer_context.get("last_answer"),
+            visible_messages=interviewer_context.get("messages"),
+        )
+        return self._call(*build_graph_interviewer_prompt(interviewer_context), parser,
                           kind="interviewer", version=GRAPH_INTERVIEWER_PROMPT_VERSION)
 
     def verify(self, context: Mapping) -> EvidenceVerification:
