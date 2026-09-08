@@ -65,6 +65,7 @@ export default function InterviewPage() {
   const stage = session?.stage ?? "knowledge";
   const timeline = session?.timeline ?? [];
   const pendingFollowup = question?.followup?.status === "pending" ? question.followup : null;
+  const isFoundation = session?.interview_type === "foundation";
 
   // 输入坞的分派：追问回答 > 阶段对话 > 知识题作答
   const inputMode: InputMode =
@@ -307,7 +308,9 @@ export default function InterviewPage() {
       ? ({ intro: "自我介绍", project_dialog: "项目深挖", knowledge: "知识环节", wrap_up: "反问环节", completed: "面试完成" }[stage] ?? "")
       : isGraph
         ? `上下文面试 · 已答 ${completedCount}/${totalCount}`
-      : `知识环节 · 已答 ${completedCount}/${totalCount}`;
+      : isFoundation
+        ? `基础题 · 已答 ${completedCount}/${totalCount}`
+        : `知识环节 · 已答 ${completedCount}/${totalCount}`;
   const showTyping = busy && (inputMode === "dialog" || stage === "project_dialog");
 
   return (
@@ -374,6 +377,16 @@ export default function InterviewPage() {
               </div>
             );
           })}
+
+          {isFoundation && question && (
+            <div className="mint-msg" key={`foundation-question-${question.id}`}>
+              <div className="mint-ava">✦</div>
+              <div className="mint-msg-body">
+                <div className="mint-who">面试官 · 第 {question.order ?? 1} 题</div>
+                <div className="mint-bubble">{question.prompt}</div>
+              </div>
+            </div>
+          )}
 
           {pendingFollowup && (
             <div className="mint-msg">

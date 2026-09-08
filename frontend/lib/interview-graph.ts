@@ -21,6 +21,7 @@ export type GraphQuestionView = {
 export type GraphSessionView = {
   session_id?: string;
   status: string;
+  interview_type: "project";
   mode: "graph";
   stage: string;
   current_question: GraphQuestionView | null;
@@ -35,6 +36,7 @@ export type GraphSessionView = {
 type GraphStateInput = {
   session_id?: string;
   status?: string;
+  interview_type?: "project";
   stage?: string;
   mode?: string;
   current_question?: GraphQuestionView | null;
@@ -74,6 +76,7 @@ export function normalizeGraphState(state: GraphStateInput): GraphSessionView {
   return {
     session_id: state.session_id,
     status,
+    interview_type: "project",
     mode: "graph",
     stage: String(state.stage || "graph"),
     current_question: currentQuestion,
