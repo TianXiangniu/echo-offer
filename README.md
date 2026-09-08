@@ -4,6 +4,17 @@ Agent 应用工程师 AI 模拟面试平台的本地垂直切片。
 
 当前闭环：PDF/DOCX 简历解析 → AI 识别 Agent 项目 → 用户确认一个项目 → LangGraph 六节点上下文面试 → AI 盲评分 → 证据报告 → 薄弱项专项练习与延迟验证。历史 `classic` / `dialog` 会话仍可继续查看。
 
+## 面试模式
+
+- **大模型基础面试**：在首页一键开始，从本地题库抽取 5 道技术题，不需要简历；进入 `/interview/{session_id}` 后可继续回答、追问和查看等级结果。
+- **项目经历面试**：进入 `/project`，上传简历、选择一个项目并完成 AI 整理后，由 LangGraph 进行上下文追问。
+
+基础会话接口：`POST /api/sessions/foundation`。
+
+项目会话接口：`POST /api/sessions` 创建 `mode=graph` 会话，再调用 `/api/sessions/{session_id}/graph/start`。
+
+两种模式共享回答保存、A/B/C/D 等级评分、结果报告、能力画像和人民币成本统计；内部仍分别使用 `classic` 与 `graph` 执行模式，存量 `dialog` 会话继续兼容。
+
 ## 目录
 
 - `backend/`：FastAPI、SQLAlchemy、SQLite API。

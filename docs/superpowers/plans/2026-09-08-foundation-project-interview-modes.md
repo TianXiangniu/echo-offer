@@ -1,6 +1,6 @@
 # 基础面试与项目面试双模式 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 将产品明确拆分为“一键开始的大模型基础面试”和“基于简历项目的上下文面试”，两种模式共享评分、报告、能力画像、人民币成本与可观测性，但使用彼此独立的出题链路。
 
@@ -94,7 +94,7 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:3000/console
 - Produces: `build_foundation_specs(*, excluded_template_ids: set[str] | None = None, rng: random.Random | None = None) -> list[QuestionSpec]`
 - Guarantees: 返回 5 道题，每组 1 道，不包含 `project.*` 或 `behavioral.*`。
 
-- [ ] **Step 1: Write the failing selector test**
+- [x] **Step 1: Write the failing selector test**
 
 在 `backend/tests/test_question_bank.py` 增加：
 
@@ -119,7 +119,7 @@ def test_foundation_specs_are_balanced_and_exclude_project_questions():
     )
 ```
 
-- [ ] **Step 2: Run the test and confirm RED**
+- [x] **Step 2: Run the test and confirm RED**
 
 Run:
 
@@ -129,7 +129,7 @@ python -m pytest backend/tests/test_question_bank.py::test_foundation_specs_are_
 
 Expected: FAIL because `FOUNDATION_QUESTION_GROUPS` and `build_foundation_specs` do not exist.
 
-- [ ] **Step 3: Implement the five balanced groups**
+- [x] **Step 3: Implement the five balanced groups**
 
 在 `backend/app/question_bank.py` 定义固定分组：
 
@@ -174,7 +174,7 @@ def build_foundation_specs(*, excluded_template_ids=None, rng=None):
     return specs
 ```
 
-- [ ] **Step 4: Restart services and confirm GREEN**
+- [x] **Step 4: Restart services and confirm GREEN**
 
 先解析 8010、3000 的监听 PID，只停止这两个明确进程；然后使用当前项目既有启动命令重启 backend/frontend。确认两个健康请求均为 200 后运行：
 
@@ -184,7 +184,7 @@ python -m pytest backend/tests/test_question_bank.py -q
 
 Expected: PASS，现有 `build_question_specs` 和 `build_knowledge_specs` 行为保持不变。
 
-- [ ] **Step 5: Commit the selector**
+- [x] **Step 5: Commit the selector**
 
 ```powershell
 git add backend/app/question_bank.py backend/tests/test_question_bank.py
@@ -208,7 +208,7 @@ git commit -m "feat: add foundation question selection"
 - Produces: `create_foundation_session(db: Session) -> dict`
 - Persists: `mode="classic"`、`session_kind="foundation"`、`stage="knowledge"`、`resume_project_id=None`。
 
-- [ ] **Step 1: Write failing persistence and migration tests**
+- [x] **Step 1: Write failing persistence and migration tests**
 
 在 `backend/tests/test_foundation_interview.py` 创建没有简历的数据库，调用新函数并断言：
 
@@ -250,7 +250,7 @@ columns = {
 assert columns["resume_project_id"]["nullable"] is True
 ```
 
-- [ ] **Step 2: Run both tests and confirm RED**
+- [x] **Step 2: Run both tests and confirm RED**
 
 Run:
 
@@ -260,7 +260,7 @@ python -m pytest backend/tests/test_foundation_interview.py backend/tests/test_m
 
 Expected: FAIL because the factory is missing and `resume_project_id` is non-nullable.
 
-- [ ] **Step 3: Add the business-type mapper**
+- [x] **Step 3: Add the business-type mapper**
 
 创建 `backend/app/interview_types.py`：
 
@@ -276,7 +276,7 @@ def interview_type_from_mode(mode: str) -> InterviewType:
 
 这层只负责用户语义，不改变任何 Graph、Dialog 或 Classic 分支判断。
 
-- [ ] **Step 4: Make the project relation nullable safely**
+- [x] **Step 4: Make the project relation nullable safely**
 
 将 ORM 字段改为：
 
@@ -315,7 +315,7 @@ def downgrade() -> None:
         )
 ```
 
-- [ ] **Step 5: Implement the foundation session factory**
+- [x] **Step 5: Implement the foundation session factory**
 
 在 `backend/app/interview_flow.py` 新增 `create_foundation_session`。它必须：
 
@@ -348,7 +348,7 @@ session = InterviewSession(
 
 把 `create_session` 中现有的题目持久化循环提取为 `_persist_questions(db, session, specs)`，两种工厂复用同一个函数，避免复制 Rubric 构建代码。
 
-- [ ] **Step 6: Restart services and verify the vertical slice**
+- [x] **Step 6: Restart services and verify the vertical slice**
 
 重启前后端并确认两个健康请求为 200，然后运行：
 
@@ -358,7 +358,7 @@ python -m pytest backend/tests/test_foundation_interview.py backend/tests/test_m
 
 Expected: PASS；已有项目会话仍保存非空 `resume_project_id`。
 
-- [ ] **Step 7: Commit persistence support**
+- [x] **Step 7: Commit persistence support**
 
 ```powershell
 git add backend/app/interview_types.py backend/alembic/versions/0021_foundation_sessions.py backend/app/models.py backend/app/interview_flow.py backend/tests/test_foundation_interview.py backend/tests/test_migrations.py
@@ -382,7 +382,7 @@ git commit -m "feat: support resume-free foundation sessions"
 - Adds: `interview_type: Literal["foundation", "project"]` to `SessionCreateResponse` and `SessionView`。
 - Keeps: `POST /api/sessions` 作为已有项目/兼容入口，现有 Graph 路由不改名。
 
-- [ ] **Step 1: Write failing API contract tests**
+- [x] **Step 1: Write failing API contract tests**
 
 基础会话测试：
 
@@ -408,7 +408,7 @@ assert graph_response.json()["interview_type"] == "project"
 assert graph_response.json()["mode"] == "graph"
 ```
 
-- [ ] **Step 2: Run API tests and confirm RED**
+- [x] **Step 2: Run API tests and confirm RED**
 
 Run:
 
@@ -418,7 +418,7 @@ python -m pytest backend/tests/test_foundation_interview.py backend/tests/test_i
 
 Expected: FAIL with 404 for `/api/sessions/foundation` and missing `interview_type`.
 
-- [ ] **Step 3: Extend response schemas**
+- [x] **Step 3: Extend response schemas**
 
 在 `backend/app/schemas.py` 增加：
 
@@ -442,7 +442,7 @@ class SessionView(BaseModel):
     timeline: list[dict] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Add the foundation route and both response mappings**
+- [x] **Step 4: Add the foundation route and both response mappings**
 
 在 `backend/app/main.py` 注册：
 
@@ -459,7 +459,7 @@ def foundation_session(db: Session = Depends(get_db)):
 "mode": "graph",
 ```
 
-- [ ] **Step 5: Restart services and confirm GREEN**
+- [x] **Step 5: Restart services and confirm GREEN**
 
 重启服务，检查 `/health` 与 `/console` 为 200，然后运行：
 
@@ -469,7 +469,7 @@ python -m pytest backend/tests/test_foundation_interview.py backend/tests/test_i
 
 Expected: PASS；基础会话调用 `/graph/start` 仍返回 409，项目会话仍正常启动 Graph。
 
-- [ ] **Step 6: Commit the API contract**
+- [x] **Step 6: Commit the API contract**
 
 ```powershell
 git add backend/app/schemas.py backend/app/main.py backend/app/interview_flow.py backend/app/interview_graph_projection.py backend/tests/test_foundation_interview.py backend/tests/test_interview_graph_api.py
@@ -495,7 +495,7 @@ git commit -m "feat: expose foundation and project interview types"
 - Produces: `/project` 项目准备页。
 - Keeps: `/interview/:id` 作为两种模式共用的面试页面。
 
-- [ ] **Step 1: Write the failing frontend type test**
+- [x] **Step 1: Write the failing frontend type test**
 
 创建 `frontend/lib/interview-type.test.ts`：
 
@@ -518,7 +518,7 @@ if (interviewEntryPath("project") !== "/project") {
 
 将该文件加入 `frontend/package.json` 的 `test` 脚本末尾。
 
-- [ ] **Step 2: Run the test and confirm RED**
+- [x] **Step 2: Run the test and confirm RED**
 
 Run:
 
@@ -528,7 +528,7 @@ node --experimental-strip-types frontend/lib/interview-type.test.ts
 
 Expected: FAIL because `frontend/lib/interview-type.ts` does not exist.
 
-- [ ] **Step 3: Add the shared frontend business type**
+- [x] **Step 3: Add the shared frontend business type**
 
 创建：
 
@@ -554,7 +554,7 @@ export function createFoundationSession() {
 
 同时把 `Question.category` 从过窄的联合类型改为 `string`，因为题库已有 `coding`、`design` 等合法类别。
 
-- [ ] **Step 4: Move the existing project setup without changing its behavior**
+- [x] **Step 4: Move the existing project setup without changing its behavior**
 
 将当前 `frontend/app/page.tsx` 的完整组件移动到 `frontend/app/project/page.tsx`，只做以下路径级修改：
 
@@ -564,7 +564,7 @@ export function createFoundationSession() {
 - 创建会话仍调用 `createSession(profile.profile_id, "graph")`。
 - 上传、识别候选项目、单项目选择、AI 整理与确认逻辑保持原样。
 
-- [ ] **Step 5: Replace root page with the mode chooser**
+- [x] **Step 5: Replace root page with the mode chooser**
 
 新的 `frontend/app/page.tsx` 只保留模式选择与基础会话启动状态。关键行为为：
 
@@ -588,7 +588,7 @@ async function startFoundation() {
 - “大模型基础面试”：说明“从题库抽取 5 道题，无需上传简历”，按钮调用 `startFoundation`。
 - “项目经历面试”：说明“上传简历并围绕一个真实项目深挖”，链接 `/project`。
 
-- [ ] **Step 6: Add minimal responsive mode-card CSS**
+- [x] **Step 6: Add minimal responsive mode-card CSS**
 
 在 `frontend/app/globals.css` 复用 `.mint-card`、`.mint-button` 与现有变量，仅增加：
 
@@ -602,7 +602,7 @@ async function startFoundation() {
 }
 ```
 
-- [ ] **Step 7: Restart services and verify frontend navigation**
+- [x] **Step 7: Restart services and verify frontend navigation**
 
 重启前后端，确认健康请求为 200，然后运行：
 
@@ -613,7 +613,7 @@ npm.cmd --prefix frontend exec tsc -- --noEmit
 
 Expected: PASS；访问 `/` 能看到两个入口，访问 `/project` 能看到原有三步项目准备流程。
 
-- [ ] **Step 8: Commit the entry split**
+- [x] **Step 8: Commit the entry split**
 
 ```powershell
 git add frontend/app/page.tsx frontend/app/project/page.tsx frontend/app/globals.css frontend/lib/api.ts frontend/lib/interview-type.ts frontend/lib/interview-type.test.ts frontend/package.json
@@ -636,7 +636,7 @@ git commit -m "feat: split foundation and project interview entry"
 - Produces: `interviewStageLabel(type, completed, total) -> string`。
 - Guarantees: 基础题显示一次，Graph 和 Dialog 的现有对话不重复显示。
 
-- [ ] **Step 1: Write failing label and graph normalization tests**
+- [x] **Step 1: Write failing label and graph normalization tests**
 
 先将 `interview-type.test.ts` 顶部 import 更新为下面内容，再增加断言：
 
@@ -663,7 +663,7 @@ if (active.interview_type !== "project") {
 }
 ```
 
-- [ ] **Step 2: Run frontend tests and confirm RED**
+- [x] **Step 2: Run frontend tests and confirm RED**
 
 Run:
 
@@ -673,7 +673,7 @@ npm.cmd --prefix frontend test
 
 Expected: FAIL because the new stage helper and Graph business type are missing.
 
-- [ ] **Step 3: Add mode-aware labels**
+- [x] **Step 3: Add mode-aware labels**
 
 在 `frontend/lib/interview-type.ts` 增加：
 
@@ -686,7 +686,7 @@ export function interviewStageLabel(type: InterviewType, completed: number, tota
 
 `normalizeGraphState` 固定返回 `interview_type: "project"`；`GraphSessionView` 同步增加该字段。
 
-- [ ] **Step 4: Render the foundation current question**
+- [x] **Step 4: Render the foundation current question**
 
 在 `frontend/app/interview/[id]/page.tsx` 的聊天区中、`timeline.map` 之前加入：
 
@@ -704,7 +704,7 @@ export function interviewStageLabel(type: InterviewType, completed: number, tota
 
 阶段标题使用 `session.interview_type`，Graph 地图保留在项目模式；基础模式不展示项目节点地图。基础题提交继续复用现有 `submitAnswer → decideFollowup → getSession → assessSession` 链路。
 
-- [ ] **Step 5: Restart services and verify both render paths**
+- [x] **Step 5: Restart services and verify both render paths**
 
 重启服务并确认健康请求为 200，然后运行：
 
@@ -720,7 +720,7 @@ npm.cmd --prefix frontend exec tsc -- --noEmit
 3. 项目面试仍显示 6 节点地图和完整上下文对话。
 4. 两种模式都能提交、“我不知道”和跳过。
 
-- [ ] **Step 6: Commit the shared interview UI**
+- [x] **Step 6: Commit the shared interview UI**
 
 ```powershell
 git add frontend/app/interview/[id]/page.tsx frontend/lib/interview-graph.ts frontend/lib/interview-graph.test.ts frontend/lib/interview-type.ts frontend/lib/interview-type.test.ts
@@ -746,7 +746,7 @@ git commit -m "feat: render foundation interviews in shared room"
 - Produces: `interviewRecordTitle(type, projectName) -> string`。
 - Guarantees: 基础会话没有项目名时显示“大模型基础面试”，不显示“未命名项目”。
 
-- [ ] **Step 1: Write failing backend history/report tests**
+- [x] **Step 1: Write failing backend history/report tests**
 
 在已有 API 测试中创建一个基础会话并完成最小回答，断言：
 
@@ -765,7 +765,7 @@ assert report.json()["interview_type"] == "foundation"
 
 现有 Graph 报告测试增加 `interview_type == "project"`。
 
-- [ ] **Step 2: Run backend tests and confirm RED**
+- [x] **Step 2: Run backend tests and confirm RED**
 
 Run:
 
@@ -775,7 +775,7 @@ python -m pytest backend/tests/test_api.py backend/tests/test_graph_scoring_obse
 
 Expected: FAIL because history and report responses do not contain the field.
 
-- [ ] **Step 3: Add type to backend read models**
+- [x] **Step 3: Add type to backend read models**
 
 `list_interview_history` 对每条会话增加：
 
@@ -795,7 +795,7 @@ return payload
 
 在 `InterviewHistoryItem` 与 `ReportResponse` 中将字段声明为 `Literal["foundation", "project"]`。
 
-- [ ] **Step 4: Write failing frontend title tests**
+- [x] **Step 4: Write failing frontend title tests**
 
 将 `frontend/lib/interview-type.test.ts` 顶部 import 更新为下面内容，再增加断言：
 
@@ -815,7 +815,7 @@ if (interviewRecordTitle("project", "DeepResearch") !== "DeepResearch") {
 }
 ```
 
-- [ ] **Step 5: Implement history and report copy**
+- [x] **Step 5: Implement history and report copy**
 
 在 `frontend/lib/interview-type.ts` 增加：
 
@@ -831,7 +831,7 @@ export function interviewRecordTitle(type: InterviewType, projectName: string | 
 router.push(interviewEntryPath(report.interview_type));
 ```
 
-- [ ] **Step 6: Restart services and confirm GREEN**
+- [x] **Step 6: Restart services and confirm GREEN**
 
 重启前后端并确认健康请求为 200，然后运行：
 
@@ -843,7 +843,7 @@ npm.cmd --prefix frontend exec tsc -- --noEmit
 
 Expected: PASS；基础记录与项目记录有清晰标题，存量 `dialog` 记录显示为项目面试。
 
-- [ ] **Step 7: Commit result labeling**
+- [x] **Step 7: Commit result labeling**
 
 ```powershell
 git add backend/app/reporting_flow.py backend/app/schemas.py backend/tests/test_api.py frontend/lib/api.ts frontend/app/history/page.tsx frontend/app/report/[id]/page.tsx frontend/lib/interview-type.ts frontend/lib/interview-type.test.ts
@@ -865,7 +865,7 @@ git commit -m "feat: label interview modes in history and reports"
 - Confirms: 两个入口独立、评分共享、Graph 不退化、人民币成本继续记录。
 - Documents: 新入口、API、内部兼容映射与非目标。
 
-- [ ] **Step 1: Update README with exact user flows**
+- [x] **Step 1: Update README with exact user flows**
 
 在 README 的运行与功能部分加入：
 
@@ -879,7 +879,7 @@ git commit -m "feat: label interview modes in history and reports"
 项目会话接口：`POST /api/sessions` 创建 `mode=graph` 会话，再调用 `/api/sessions/{id}/graph/start`。
 ```
 
-- [ ] **Step 2: Run full backend verification**
+- [x] **Step 2: Run full backend verification**
 
 Run:
 
@@ -889,7 +889,7 @@ python -m pytest backend/tests -q
 
 Expected: 全部通过，失败数为 0。
 
-- [ ] **Step 3: Run Graph quality regression**
+- [x] **Step 3: Run Graph quality regression**
 
 Run:
 
@@ -899,7 +899,7 @@ python backend/scripts/eval_interview_graph.py --cases backend/tests/fixtures/in
 
 Expected: 全部 Graph gates 通过，项目问题链未因入口拆分发生退化。
 
-- [ ] **Step 4: Run frontend verification**
+- [x] **Step 4: Run frontend verification**
 
 Run:
 
@@ -910,11 +910,11 @@ npm.cmd --prefix frontend exec tsc -- --noEmit
 
 Expected: 两条命令退出码均为 0。
 
-- [ ] **Step 5: Verify observability remains shared**
+- [x] **Step 5: Verify observability remains shared**
 
 分别完成一场基础面试和一场项目面试，将两次创建响应返回的真实 `session_id` 传给 `/api/observability/summary` 的 `session_id` 查询参数。确认两种会话都能看到模型调用次数、Token、延迟和人民币成本；基础会话创建本身不调用模型，因此成本只来自追问与评分。
 
-- [ ] **Step 6: Perform browser acceptance**
+- [x] **Step 6: Perform browser acceptance**
 
 按顺序检查：
 
@@ -926,7 +926,7 @@ Expected: 两条命令退出码均为 0。
 6. 项目面试进入 Graph 地图，后续问题承接上一轮答案，完成后报告标题显示项目模式。
 7. 刷新进行中的两种会话都能恢复，已保存回答不会丢失。
 
-- [ ] **Step 7: Restart services and perform final health check**
+- [x] **Step 7: Restart services and perform final health check**
 
 重启明确监听 8010 与 3000 的进程，随后运行：
 
@@ -939,7 +939,7 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:3000/console
 
 Expected: 四个请求均返回 200，页面样式文件正常加载。
 
-- [ ] **Step 8: Check the final diff and commit documentation**
+- [x] **Step 8: Check the final diff and commit documentation**
 
 Run:
 
