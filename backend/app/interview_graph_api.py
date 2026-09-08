@@ -147,9 +147,10 @@ def _repair_projection(db: Session, session_id: str, state: Mapping) -> None:
         raise
 
 
-def _public_state(db: Session, session_id: str, graph) -> dict:
+def _public_state(db: Session, session_id: str, graph, *, repair: bool = True) -> dict:
     state = graph.get_state(graph_config(session_id)).values
-    _repair_projection(db, session_id, state)
+    if repair:
+        _repair_projection(db, session_id, state)
     return get_session_view(db, session_id, state)
 
 
@@ -236,7 +237,7 @@ def resume_graph(
     )
     checkpoint = graph.get_state(graph_config(session.id)).values
     if checkpoint.get("status") == "completed":
-        return _public_state(db, session.id, graph)
+        return _public_state(db, session.id, graph, repair=False)
     _invoke_and_project(
         db,
         lambda: graph.invoke(

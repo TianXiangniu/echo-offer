@@ -1,6 +1,8 @@
+import pytest
 from sqlalchemy import func, select
 from fastapi.testclient import TestClient
 
+import app.interview_graph_api as graph_api
 from app.interview_graph_types import EvidenceVerification, InterviewPlan, InterviewPlanNode, InterviewerTurn
 from app.main import create_app
 from app.models import AnswerAttempt
@@ -151,6 +153,45 @@ def test_duplicate_graph_resume_returns_state_without_second_answer(tmp_path):
     assert second.status_code == 200
     assert second.json()["current_question"] == first.json()["current_question"]
     assert count_answers(client, session_id) == 1
+
+
+def test_completed_resume_is_read_only_after_projection_failure(tmp_path, monkeypatch):
+    client, session_id = graph_client(tmp_path)
+    client.post(f"/api/sessions/{session_id}/graph/start")
+    for index in range(5):
+        response = client.post(
+            f"/api/sessions/{session_id}/graph/resume",
+            json={
+                "answer_text": f"回答 {index}",
+                "client_submission_id": f"answer-{index}",
+            },
+        )
+        assert response.status_code == 200
+
+    original = graph_api.project_graph_event
+
+    def fail_candidate(db, event, *, commit=True):
+        if event["event_kind"] == "candidate_answer":
+            raise RuntimeError("projection unavailable")
+        return original(db, event, commit=commit)
+
+    monkeypatch.setattr(graph_api, "project_graph_event", fail_candidate)
+    with pytest.raises(RuntimeError, match="projection unavailable"):
+        client.post(
+            f"/api/sessions/{session_id}/graph/resume",
+            json={"answer_text": "回答 5", "client_submission_id": "answer-5"},
+        )
+    monkeypatch.setattr(graph_api, "project_graph_event", original)
+
+    before = count_answers(client, session_id)
+    response = client.post(
+        f"/api/sessions/{session_id}/graph/resume",
+        json={"answer_text": "late answer", "client_submission_id": "late-1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert count_answers(client, session_id) == before == 5
 
 
 class ProviderUnavailableGraphAgents:
