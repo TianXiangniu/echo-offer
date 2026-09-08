@@ -30,7 +30,7 @@
 - Produces: `build_graph_context(project: ResumeProject, analysis: ResumeProjectAnalysis | None) -> dict`
 - Consumes: `ResumeProject.analysis_id` 和 `ResumeProjectAnalysis.analysis_json`
 
-- [ ] **Step 1: Write the failing context tests**
+- [x] **Step 1: Write the failing context tests**
 
 ```python
 def test_graph_context_keeps_only_confirmed_project_facts():
@@ -47,23 +47,23 @@ def test_graph_context_falls_back_to_confirmed_project_fields():
     assert context["project"]["name"] == project.project_name
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm RED**
+- [x] **Step 2: Run the focused tests and confirm RED**
 
 Run: `python -m pytest backend/tests/test_interview_graph_context.py -q`
 
 Expected: FAIL because `build_graph_context` does not exist.
 
-- [ ] **Step 3: Implement minimal safe context hydration**
+- [x] **Step 3: Implement minimal safe context hydration**
 
 Load the analysis row by `project.analysis_id`. Keep only facts whose status is `extracted` or `confirmed`, copy `fact_id`, `field`, `value`, and at most the first three evidence quotes; strip whitespace and cap each value at 500 characters. If no eligible facts exist, create facts from the eight confirmed `ResumeProject` text fields with deterministic IDs such as `project:tech_stack`. Never copy `resume_text`, API settings, or the full analysis JSON.
 
-- [ ] **Step 4: Run focused and graph API tests**
+- [x] **Step 4: Run focused and graph API tests**
 
 Run: `python -m pytest backend/tests/test_interview_graph_context.py backend/tests/test_interview_graph_api.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit context hydration**
+- [x] **Step 5: Commit context hydration**
 
 ```bash
 git add backend/app/interview_graph_api.py backend/tests/test_interview_graph_context.py
@@ -82,7 +82,7 @@ git commit -m "feat: hydrate graph interviews with verified project facts"
 - Produces: `fallback_interviewer_turn(state) -> dict`
 - Produces: `fallback_evidence_verification(state) -> EvidenceVerification`
 
-- [ ] **Step 1: Write failing fallback tests**
+- [x] **Step 1: Write failing fallback tests**
 
 ```python
 def test_planner_failure_still_returns_six_node_plan():
@@ -98,27 +98,27 @@ def test_verifier_failure_does_not_claim_coverage():
     assert result.confidence == 0
 ```
 
-- [ ] **Step 2: Run focused tests and confirm RED**
+- [x] **Step 2: Run focused tests and confirm RED**
 
 Run: `python -m pytest backend/tests/test_interview_graph_fallbacks.py -q`
 
 Expected: FAIL because the fallback helpers do not exist.
 
-- [ ] **Step 3: Implement exception boundaries in graph nodes**
+- [x] **Step 3: Implement exception boundaries in graph nodes**
 
 Use a fixed six-node plan whose opening questions reference only the project name or ask openly for missing details. Catch only model/provider/parsing exceptions around each role call: planner falls back to the fixed plan, interviewer falls back to the current node opening question, and verifier returns `insufficient` with no claims or coverage. Emit a safe `state_updated` payload with `degraded=true` and a user-facing status, without including exception text, prompts, or raw responses.
 
-- [ ] **Step 4: Run graph regression tests**
+- [x] **Step 4: Run graph regression tests**
 
 Run: `python -m pytest backend/tests/test_interview_graph_fallbacks.py backend/tests/test_interview_graph.py backend/tests/test_interview_graph_api.py -q`
 
 Expected: PASS, including existing transactional rollback and checkpoint recovery tests.
 
-- [ ] **Step 5: Restart services and verify the degraded path**
+- [x] **Step 5: Restart services and verify the degraded path**
 
 Stop ports 8010 and 3000, start the backend and frontend with the README commands, then verify `GET http://127.0.0.1:8010/health` and `GET http://127.0.0.1:3000/console` both return 200. Use a fake agent that raises from `plan`, `ask`, and `verify` to confirm a Graph session still returns a question instead of a 500.
 
-- [ ] **Step 6: Commit fallback hardening**
+- [x] **Step 6: Commit fallback hardening**
 
 ```bash
 git add backend/app/interview_graph.py backend/app/interview_graph_types.py backend/tests/test_interview_graph_fallbacks.py
