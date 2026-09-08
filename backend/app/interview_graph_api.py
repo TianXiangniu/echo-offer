@@ -15,11 +15,86 @@ from .models import (
     AnswerAttempt,
     InterviewGraphEventReceipt,
     InterviewSession,
+    ResumeProjectAnalysis,
     ResumeProject,
 )
 from .schemas import GraphAnswerSubmission
 from .interview_graph_projection import project_graph_event
 from .workflow_common import ConflictError, NotFoundError, _get_active_session
+
+
+_PROJECT_CONTEXT_FIELDS = (
+    ("background_goal", "background_goal"),
+    ("tech_stack", "tech_stack"),
+    ("responsibilities", "responsibilities"),
+    ("core_solution", "core_solution"),
+    ("engineering_challenges", "engineering_challenges"),
+    ("failure_improvements", "failure_improvements"),
+    ("quantified_results", "quantified_results"),
+)
+
+
+def _compact_context_text(value: object, limit: int = 500) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def build_graph_context(
+    project: ResumeProject,
+    analysis: ResumeProjectAnalysis | None = None,
+) -> dict:
+    """Build the smallest safe project context for the LangGraph state."""
+
+    project_context = {
+        "project_id": project.id,
+        "name": _compact_context_text(project.project_name, 200),
+        **{
+            public_name: _compact_context_text(getattr(project, attribute, ""), 1000)
+            for public_name, attribute in _PROJECT_CONTEXT_FIELDS
+        },
+    }
+    facts: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    if analysis is not None and analysis.status == "confirmed":
+        try:
+            snapshot = json.loads(analysis.analysis_json or "{}")
+        except (TypeError, json.JSONDecodeError):
+            snapshot = {}
+        raw_facts = snapshot.get("facts", []) if isinstance(snapshot, Mapping) else []
+        if isinstance(raw_facts, Mapping):
+            raw_facts = [raw_facts]
+        if isinstance(raw_facts, list):
+            for index, raw_fact in enumerate(raw_facts, start=1):
+                if not isinstance(raw_fact, Mapping):
+                    continue
+                if raw_fact.get("status") not in {"extracted", "confirmed"}:
+                    continue
+                value = _compact_context_text(raw_fact.get("value"))
+                if not value:
+                    continue
+                fact_id = _compact_context_text(raw_fact.get("fact_id") or f"analysis:{index}", 128)
+                if not fact_id or fact_id in seen_ids:
+                    continue
+                seen_ids.add(fact_id)
+                facts.append(
+                    {
+                        "fact_id": fact_id,
+                        "field": _compact_context_text(raw_fact.get("field") or "project_fact", 160),
+                        "value": value,
+                    }
+                )
+
+    if not facts:
+        for public_name, attribute in _PROJECT_CONTEXT_FIELDS:
+            value = project_context.get(public_name, "")
+            if value:
+                facts.append(
+                    {
+                        "fact_id": f"project:{attribute}",
+                        "field": attribute,
+                        "value": value,
+                    }
+                )
+    return {"project": project_context, "verified_facts": facts}
 
 
 def _graph_session(db: Session, session_id: str) -> tuple[InterviewSession, ResumeProject]:
@@ -32,15 +107,15 @@ def _graph_session(db: Session, session_id: str) -> tuple[InterviewSession, Resu
     return session, project
 
 
-def _initial_state(session: InterviewSession, project: ResumeProject) -> dict:
+def _initial_state(
+    session: InterviewSession,
+    project: ResumeProject,
+    analysis: ResumeProjectAnalysis | None = None,
+) -> dict:
+    context = build_graph_context(project, analysis)
     return {
         "session_id": session.id,
-        "project": {
-            "project_id": project.id,
-            "name": project.project_name,
-            "summary": project.background_goal,
-        },
-        "verified_facts": [],
+        **context,
         "plan": [],
         "current_node_index": 0,
         "current_question": None,
@@ -100,6 +175,7 @@ def _invoke_and_project(db: Session, invoke, events: list[dict]) -> None:
 
 def start_graph(db: Session, session_id: str, *, graph_builder, agents, checkpointer) -> dict:
     session, project = _graph_session(db, session_id)
+    analysis = db.get(ResumeProjectAnalysis, project.analysis_id) if project.analysis_id else None
     events: list[dict] = []
     graph = _build_graph(
         graph_builder=graph_builder,
@@ -112,7 +188,10 @@ def start_graph(db: Session, session_id: str, *, graph_builder, agents, checkpoi
     if not existing:
         _invoke_and_project(
             db,
-            lambda: graph.invoke(_initial_state(session, project), graph_config(session.id)),
+            lambda: graph.invoke(
+                _initial_state(session, project, analysis),
+                graph_config(session.id),
+            ),
             events,
         )
     return _public_state(db, session.id, graph)
