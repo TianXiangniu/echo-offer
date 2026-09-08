@@ -160,7 +160,24 @@ export default function InterviewPage() {
         setAnswerText("");
         setSubmissionId(newSubmissionId());
         setSession(next);
-        if (next.status === "completed") await generateAssessment();
+        if (next.status === "completed") {
+          if (!next.assessment) {
+            await generateAssessment();
+          } else {
+            setAssessment(next.assessment);
+            if (!hasUsableAssessmentResult(next.assessment)) {
+              setCanRetryAssessment(true);
+              setError(assessmentFailureMessage(next.assessment));
+              return;
+            }
+            if (next.assessment.status !== "valid") {
+              router.push(`/report/${sessionId}`);
+              return;
+            }
+            setAssessmentStage("生成报告");
+            router.push(`/report/${sessionId}`);
+          }
+        }
         return;
       }
       await submitAnswer(sessionId, { question_id: question.id, client_submission_id: submissionId, status, answer_text: status === "explicit_unknown" ? "不知道" : answerText });
