@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from collections.abc import Callable, Iterator, Mapping
+from datetime import timedelta
+from threading import Lock
+from uuid import uuid4
 
 from langgraph.types import Command
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .interview_flow import get_session_view
@@ -14,9 +19,12 @@ from .interview_graph_runtime import graph_config
 from .models import (
     AnswerAttempt,
     InterviewGraphEventReceipt,
+    InterviewGraphSubmissionReceipt,
     InterviewSession,
     ResumeProjectAnalysis,
     ResumeProject,
+    ensure_utc,
+    utc_now,
 )
 from .schemas import GraphAnswerSubmission
 from .interview_graph_projection import project_graph_event
@@ -32,6 +40,90 @@ _PROJECT_CONTEXT_FIELDS = (
     ("failure_improvements", "failure_improvements"),
     ("quantified_results", "quantified_results"),
 )
+
+_submission_locks: dict[str, Lock] = {}
+_submission_locks_guard = Lock()
+_SUBMISSION_TTL = timedelta(hours=2)
+
+
+def _submission_lock(session_id: str) -> Lock:
+    # ponytail: local lock reduces duplicate work; the durable receipt below covers other workers.
+    with _submission_locks_guard:
+        return _submission_locks.setdefault(session_id, Lock())
+
+
+def _submission_hash(answer_text: str) -> str:
+    return hashlib.sha256(answer_text.encode("utf-8")).hexdigest()
+
+
+def _existing_submission_result(
+    db: Session,
+    existing: InterviewGraphSubmissionReceipt,
+    answer_hash: str,
+) -> bool:
+    if existing.answer_text_hash != answer_hash:
+        raise ConflictError("client_submission_id was already used with different content")
+    if existing.status == "completed":
+        return False
+    if (
+        existing.status == "processing"
+        and ensure_utc(existing.created_at) <= utc_now() - _SUBMISSION_TTL
+    ):
+        existing.status = "failed"
+        db.commit()
+        raise ConflictError("client_submission_id expired after a failed processing attempt; use a new id")
+    raise ConflictError("client_submission_id is already processing or has failed")
+
+
+def _reserve_submission(db: Session, session_id: str, payload: GraphAnswerSubmission) -> bool:
+    """Reserve a submission before graph/model work; return False for a completed duplicate."""
+
+    answer_hash = _submission_hash(payload.answer_text)
+    existing = db.scalar(
+        select(InterviewGraphSubmissionReceipt).where(
+            InterviewGraphSubmissionReceipt.session_id == session_id,
+            InterviewGraphSubmissionReceipt.client_submission_id == payload.client_submission_id,
+        )
+    )
+    if existing is not None:
+        return _existing_submission_result(db, existing, answer_hash)
+
+    db.add(
+        InterviewGraphSubmissionReceipt(
+            id=str(uuid4()),
+            session_id=session_id,
+            client_submission_id=payload.client_submission_id,
+            answer_text_hash=answer_hash,
+            status="processing",
+        )
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(
+            select(InterviewGraphSubmissionReceipt).where(
+                InterviewGraphSubmissionReceipt.session_id == session_id,
+                InterviewGraphSubmissionReceipt.client_submission_id == payload.client_submission_id,
+            )
+        )
+        if existing is None:
+            raise
+        return _existing_submission_result(db, existing, answer_hash)
+    return True
+
+
+def _set_submission_status(db: Session, session_id: str, client_submission_id: str, status: str) -> None:
+    db.rollback()
+    receipt = db.scalar(
+        select(InterviewGraphSubmissionReceipt).where(
+            InterviewGraphSubmissionReceipt.session_id == session_id,
+            InterviewGraphSubmissionReceipt.client_submission_id == client_submission_id,
+        )
+    )
+    if receipt is not None:
+        receipt.status = status
+        db.commit()
 
 
 def _compact_context_text(value: object, limit: int = 500) -> str:
@@ -232,7 +324,7 @@ def start_graph(
     )
 
 
-def resume_graph(
+def _resume_graph_locked(
     db: Session,
     session_id: str,
     payload: GraphAnswerSubmission,
@@ -278,23 +370,55 @@ def resume_graph(
             _public_state(db, session.id, graph, repair=False),
             on_completed,
         )
-    _invoke_and_project(
-        db,
-        lambda: graph.invoke(
-            Command(
-                resume={
-                    "content": payload.answer_text,
-                    "client_submission_id": payload.client_submission_id,
-                }
+    if not _reserve_submission(db, session.id, payload):
+        return _attach_completion_result(
+            _public_state(db, session.id, graph),
+            on_completed,
+        )
+    try:
+        _invoke_and_project(
+            db,
+            lambda: graph.invoke(
+                Command(
+                    resume={
+                        "content": payload.answer_text,
+                        "client_submission_id": payload.client_submission_id,
+                    }
+                ),
+                graph_config(session.id),
             ),
-            graph_config(session.id),
-        ),
-        events,
-    )
+            events,
+        )
+    except Exception:
+        _set_submission_status(db, session.id, payload.client_submission_id, "failed")
+        raise
+    _set_submission_status(db, session.id, payload.client_submission_id, "completed")
     return _attach_completion_result(
         _public_state(db, session.id, graph),
         on_completed,
     )
+
+
+def resume_graph(
+    db: Session,
+    session_id: str,
+    payload: GraphAnswerSubmission,
+    *,
+    graph_builder,
+    agents,
+    checkpointer,
+    on_completed: Callable[[], Mapping] | None = None,
+) -> dict:
+    with _submission_lock(session_id):
+        return _resume_graph_locked(
+            db,
+            session_id,
+            payload,
+            graph_builder=graph_builder,
+            agents=agents,
+            checkpointer=checkpointer,
+            on_completed=on_completed,
+        )
 
 
 def graph_state(db: Session, session_id: str, *, graph_builder, agents, checkpointer) -> dict:

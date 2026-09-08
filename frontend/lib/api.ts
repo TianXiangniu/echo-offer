@@ -220,6 +220,7 @@ export type GraphSessionResponse = {
   nodes: GraphPlanNode[];
   progress: { completed: number; total: number };
   timeline: DialogMessage[];
+  assessment?: AssessmentBatchResponse;
 };
 
 export type InterviewHistoryItem = {

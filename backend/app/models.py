@@ -274,6 +274,26 @@ class InterviewGraphEventReceipt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class InterviewGraphSubmissionReceipt(Base):
+    """Durable reservation preventing duplicate graph work across workers."""
+
+    __tablename__ = "interview_graph_submission_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "client_submission_id",
+            name="uq_graph_submission_session_client",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("interview_sessions.id"), index=True)
+    client_submission_id: Mapped[str] = mapped_column(String(120))
+    answer_text_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="processing")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class AnswerAttempt(Base):
     __tablename__ = "answer_attempts"
     __table_args__ = (

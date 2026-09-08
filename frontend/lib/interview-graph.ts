@@ -29,6 +29,7 @@ export type GraphSessionView = {
   timeline: DialogMessage[];
   degraded: boolean;
   canAnswer: boolean;
+  assessment?: import("./api").AssessmentBatchResponse;
 };
 
 type GraphStateInput = {
@@ -41,6 +42,7 @@ type GraphStateInput = {
   progress?: Partial<GraphSessionView["progress"]>;
   timeline?: DialogMessage[];
   degraded?: boolean;
+  assessment?: import("./api").AssessmentBatchResponse;
 };
 
 const NODE_LABELS: Record<string, string> = {
@@ -80,6 +82,7 @@ export function normalizeGraphState(state: GraphStateInput): GraphSessionView {
     timeline: state.timeline || [],
     degraded: state.degraded === true,
     canAnswer: status === "awaiting_answer" && Boolean(currentQuestion),
+    assessment: state.assessment,
   };
 }
 import type { DialogMessage } from "./api";
