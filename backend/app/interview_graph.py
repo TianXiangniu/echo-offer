@@ -13,6 +13,7 @@ from app.interview_graph_types import (
     EvidenceVerification,
     InterviewGraphState,
     InterviewPlan,
+    InterviewPlanNode,
     InterviewerTurn,
     MAX_FOLLOWUPS_PER_NODE,
 )
@@ -53,6 +54,107 @@ def _current_node(state: InterviewGraphState) -> dict:
 
 def _current_kind(state: InterviewGraphState) -> str:
     return str(_current_node(state).get("kind", "architecture"))
+
+
+_FALLBACK_NODE_SPECS = (
+    (
+        "opening",
+        "确认项目背景、业务目标和个人职责边界",
+        "请先介绍你在「{project}」中的业务目标、个人职责和团队边界。",
+        ("业务目标", "个人职责", "团队边界"),
+    ),
+    (
+        "project",
+        "确认项目输入输出和关键使用场景",
+        "请说明「{project}」的核心输入、输出和最重要的使用场景。",
+        ("输入输出", "使用场景"),
+    ),
+    (
+        "architecture",
+        "验证核心组件、数据流和状态流",
+        "请说明「{project}」的核心架构和数据流，哪些组件由你负责？",
+        ("组件职责", "数据流", "边界"),
+    ),
+    (
+        "challenge",
+        "验证故障定位、可靠性和恢复方式",
+        "请讲一个「{project}」中遇到的故障或工程难点，以及你如何定位和恢复。",
+        ("故障案例", "定位过程", "恢复方式"),
+    ),
+    (
+        "tradeoff",
+        "验证方案取舍、约束和替代方案",
+        "在「{project}」中你做过哪些方案取舍？为什么没有选择其他方案？",
+        ("备选方案", "约束", "取舍原因"),
+    ),
+    (
+        "evidence",
+        "验证效果、稳定性和成本的量化方法",
+        "你如何验证「{project}」的效果、稳定性或成本变化？请说明指标和基线。",
+        ("指标", "基线", "验证方法"),
+    ),
+)
+
+
+def _is_model_failure(error: Exception) -> bool:
+    """Recognize provider/parser failures without hiding graph programming bugs."""
+
+    return isinstance(error, (ValueError, TypeError)) or bool(getattr(error, "code", None))
+
+
+def fallback_interview_plan(state: Mapping) -> InterviewPlan:
+    """Return a fact-neutral six-node plan when planning is unavailable."""
+
+    project = "这个项目"
+    project_state = state.get("project")
+    if isinstance(project_state, Mapping):
+        project = str(project_state.get("name") or project).strip()[:120] or project
+    return InterviewPlan(
+        nodes=[
+            InterviewPlanNode(
+                node_id=kind,
+                kind=kind,
+                goal=goal,
+                project_fact_ids=[],
+                required_targets=list(targets),
+                opening_question=question.format(project=project),
+                rubric_ids=["correctness", "mechanism", "scenario", "engineering"],
+                max_followups=MAX_FOLLOWUPS_PER_NODE,
+            )
+            for kind, goal, question, targets in _FALLBACK_NODE_SPECS
+        ]
+    )
+
+
+def fallback_interviewer_turn(state: Mapping) -> dict:
+    """Ask the current node's safe opening question without model output."""
+
+    node = _current_node(state)
+    return {
+        "question": str(node.get("opening_question") or "请继续介绍这个项目。")[:150],
+        "kind": "opening" if not state.get("last_answer") else "clarification",
+        "rationale": "模型暂不可用，使用节点保底问题",
+        "referenced_quote": "",
+        "followups_used": 0,
+    }
+
+
+def fallback_evidence_verification(state: Mapping) -> EvidenceVerification:
+    """Keep the answer unverified rather than inventing coverage on failure."""
+
+    node = state.get("current_node")
+    required_targets = state.get("required_targets")
+    if not isinstance(required_targets, list) and isinstance(node, Mapping):
+        required_targets = node.get("required_targets")
+    missing = [str(item) for item in required_targets or [] if str(item).strip()]
+    return EvidenceVerification(
+        claims=[],
+        covered_targets=[],
+        missing_targets=missing,
+        conflicts=[],
+        confidence=0,
+        route="insufficient",
+    )
 
 
 def _current_followup_key(state: InterviewGraphState) -> str:
@@ -120,22 +222,47 @@ def build_interview_graph(
 
     def planner(state: InterviewGraphState) -> dict:
         plan = state.get("plan", [])
+        degraded = False
         plan_method = getattr(agents, "plan", None)
         if callable(plan_method):
-            result = plan_method(state)
-            plan = _dump(result).get("nodes", [])
-        return {"plan": plan, "current_node_index": 0, "status": "planning"}
+            try:
+                result = plan_method(state)
+                plan = InterviewPlan.model_validate({"nodes": _dump(result).get("nodes", [])}).model_dump(
+                    mode="json"
+                )["nodes"]
+            except Exception as error:
+                if not _is_model_failure(error):
+                    raise
+                plan = []
+                degraded = True
+        if not plan:
+            plan = fallback_interview_plan(state).model_dump(mode="json")["nodes"]
+            degraded = True
+        updates = {"plan": plan, "current_node_index": 0, "status": "planning"}
+        if degraded:
+            updates["graph_events"] = [
+                emit(
+                    state,
+                    "state_updated",
+                    "degraded:planner",
+                    {"status": "planning", "degraded": True, "role": "planner"},
+                )
+            ]
+        return updates
 
     def interviewer(state: InterviewGraphState) -> dict:
         node = _current_node(state)
         ask_method = getattr(agents, "ask", None)
-        if callable(ask_method):
-            turn = _dump(ask_method(state))
-            text = str(turn.get("question", node.get("opening_question", "请继续介绍。")))
-            question_kind = str(turn.get("kind", "followup" if state.get("last_answer") else "opening"))
-        else:
-            text = str(node.get("opening_question", "请继续介绍。"))
-            question_kind = "followup" if state.get("last_answer") else "opening"
+        degraded = False
+        try:
+            turn = _dump(ask_method(state)) if callable(ask_method) else fallback_interviewer_turn(state)
+        except Exception as error:
+            if not _is_model_failure(error):
+                raise
+            turn = fallback_interviewer_turn(state)
+            degraded = True
+        text = str(turn.get("question", node.get("opening_question", "请继续介绍。")))
+        question_kind = str(turn.get("kind", "followup" if state.get("last_answer") else "opening"))
 
         question = {"node_id": str(node.get("node_id", "unknown")), "text": text, "kind": question_kind}
         current_question_id = question_id(state)
@@ -152,12 +279,22 @@ def build_interview_graph(
             },
         )
         message = {"role": "interviewer", "node_id": question["node_id"], "content": text}
-        return {
+        updates = {
             "current_question": question,
             "messages": [message],
             "graph_events": [event],
             "status": "awaiting_answer",
         }
+        if degraded:
+            updates["graph_events"].append(
+                emit(
+                    state,
+                    "state_updated",
+                    f"degraded:interviewer:{current_question_id}",
+                    {"status": "awaiting_answer", "degraded": True, "role": "interviewer"},
+                )
+            )
+        return updates
 
     def wait_for_candidate(state: InterviewGraphState) -> dict:
         question = state.get("current_question") or {}
@@ -193,17 +330,18 @@ def build_interview_graph(
 
     def evidence_verifier(state: InterviewGraphState) -> dict:
         verify_method = getattr(agents, "verify", None)
-        if callable(verify_method):
-            verification = EvidenceVerification.model_validate(_dump(verify_method(state)))
-        else:
-            verification = EvidenceVerification(
-                claims=[],
-                covered_targets=[],
-                missing_targets=[],
-                conflicts=[],
-                confidence=0,
-                route="covered",
+        degraded = False
+        try:
+            verification = (
+                EvidenceVerification.model_validate(_dump(verify_method(state)))
+                if callable(verify_method)
+                else fallback_evidence_verification(state)
             )
+        except Exception as error:
+            if not _is_model_failure(error):
+                raise
+            verification = fallback_evidence_verification(state)
+            degraded = True
 
         node = _current_node(state)
         node_id = str(node.get("node_id", "unknown"))
@@ -225,13 +363,23 @@ def build_interview_graph(
             if followup_key != kind:
                 followups_used.pop(kind, None)
 
-        return {
+        updates = {
             "route": verification.route,
             "coverage": coverage,
             "conflicts": conflicts,
             "followups_used": followups_used,
             "status": "verifying",
         }
+        if degraded or not callable(verify_method):
+            updates["graph_events"] = [
+                emit(
+                    state,
+                    "state_updated",
+                    f"degraded:verifier:{question_id(state)}",
+                    {"status": "verifying", "degraded": True, "role": "evidence_verifier"},
+                )
+            ]
+        return updates
 
     def advance_plan(state: InterviewGraphState) -> dict:
         return {

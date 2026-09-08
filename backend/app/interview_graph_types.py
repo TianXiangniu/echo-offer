@@ -55,7 +55,7 @@ class MessageState(TypedDict):
 class GraphEventState(TypedDict):
     session_id: str
     graph_step_id: str
-    event_kind: Literal["question_ready", "candidate_answer", "completed"]
+    event_kind: Literal["question_ready", "candidate_answer", "state_updated", "completed"]
     payload: dict
 
 
