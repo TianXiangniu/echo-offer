@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from app.interview_graph_types import EvidenceVerification, InterviewPlan, InterviewPlanNode, InterviewerTurn
 from app.main import create_app
 from app.models import AnswerAttempt
+from app.providers import AssessmentProviderError
 
 
 def _plan() -> InterviewPlan:
@@ -49,12 +50,12 @@ class StableGraphAgents:
         )
 
 
-def graph_client(tmp_path):
+def graph_client(tmp_path, agents=None):
     app = create_app(
         f"sqlite:///{tmp_path / 'graph-e2e.db'}",
         upload_root=tmp_path / "uploads",
     )
-    app.state.interview_graph_agents = StableGraphAgents()
+    app.state.interview_graph_agents = agents or StableGraphAgents()
     client = TestClient(app)
     profile = client.post(
         "/api/profile",
@@ -150,3 +151,31 @@ def test_duplicate_graph_resume_returns_state_without_second_answer(tmp_path):
     assert second.status_code == 200
     assert second.json()["current_question"] == first.json()["current_question"]
     assert count_answers(client, session_id) == 1
+
+
+class ProviderUnavailableGraphAgents:
+    def _error(self):
+        raise AssessmentProviderError("provider_not_configured", "模型服务尚未配置")
+
+    def plan(self, state):
+        self._error()
+
+    def ask(self, state):
+        self._error()
+
+    def verify(self, state):
+        self._error()
+
+
+def test_provider_unavailable_api_returns_safe_degraded_state(tmp_path):
+    client, session_id = graph_client(tmp_path, ProviderUnavailableGraphAgents())
+
+    started = client.post(f"/api/sessions/{session_id}/graph/start")
+    assert started.status_code == 200
+    assert started.json()["status"] == "awaiting_answer"
+    assert started.json()["degraded"] is True
+
+    events = client.get(f"/api/sessions/{session_id}/graph/events")
+    assert events.status_code == 200
+    assert "provider_not_configured" not in events.text
+    assert "question_ready" in events.text
