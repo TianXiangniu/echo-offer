@@ -25,6 +25,8 @@ def test_planner_prompt_forbids_unverified_facts_and_grades():
     system, user = build_planner_prompt(project_context())
     assert "未验证事实" in system
     assert "不得评分" in system
+    assert "像真实面试一样说话" in system
+    assert "业务目标" in system
     assert "context_ownership" in user
     assert "verified_facts" in user
 
@@ -39,6 +41,14 @@ def test_interviewer_prompt_contains_only_recent_context():
     _, user = build_interviewer_prompt(context)
     assert "回答 1" not in user
     assert "回答 7" in user
+
+
+def test_interviewer_prompt_requires_conversational_spoken_questions():
+    system, _ = build_interviewer_prompt({"current_node": {"kind": "opening"}})
+
+    assert "像真实面试一样说话" in system
+    assert "不要直接说出" in system
+    assert "业务目标" in system
 
 
 def test_interviewer_must_reference_last_answer_for_followup():

@@ -21,6 +21,20 @@ def test_planner_failure_still_returns_six_node_plan():
     assert "RAG Agent" in plan.nodes[0].opening_question
 
 
+def test_fallback_questions_use_conversational_words():
+    plan = fallback_interview_plan({"project": {"name": "RAG Agent"}})
+
+    spoken_questions = [node.opening_question for node in plan.nodes]
+
+    assert not any(
+        term in question
+        for question in spoken_questions
+        for term in ("业务目标", "个人职责", "团队边界")
+    )
+    assert "为什么要做" in spoken_questions[0]
+    assert "主要负责哪一块" in spoken_questions[0]
+
+
 def test_verifier_failure_does_not_claim_coverage():
     result = fallback_evidence_verification(
         {"required_targets": ["指标"], "current_node": {"required_targets": ["指标"]}}

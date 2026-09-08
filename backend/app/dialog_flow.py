@@ -51,8 +51,8 @@ from .workflow_common import (
 
 DEEP_DIVE_KNOWLEDGE_POINT = "project.deep_dive"
 DEEP_DIVE_PROMPT = (
-    "请介绍这个项目的整体情况：业务背景、你的职责、关键技术方案、"
-    "遇到的困难和最终结果。结合面试中的对话一并评估。"
+    "先从整体讲讲这个项目：当时为什么要做、你主要负责哪一块、"
+    "核心方案怎么落地、遇到过什么难题、最后效果怎么样？"
 )
 
 
