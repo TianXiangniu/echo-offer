@@ -79,6 +79,15 @@ DEFAULT_FIXED_KNOWLEDGE_POINTS: tuple[str, ...] = (
 # 固定题槽位中作为锚题的位置（叠加项目题 1 号锚，全场共 3 个锚题）。
 FIXED_ANCHOR_OFFSETS: frozenset[int] = frozenset({0, 3})
 
+# 基础面试每组抽一道技术题，明确排除项目经历和行为题。
+FOUNDATION_QUESTION_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("rag.retrieval_diagnosis", "rag.query_rewrite_and_hybrid_retrieval"),
+    ("agent_runtime.tool_calling", "mcp.tool_ecosystem"),
+    ("multi_agent.orchestration", "memory.design"),
+    ("evals.observability", "engineering.latency_diagnosis", "engineering.output_safety"),
+    ("design.agent_platform", "design.rag_system", "coding.debug_tool_call", "coding.write_tool_loop"),
+)
+
 
 def _templates(
     knowledge_point_id: str,
@@ -496,3 +505,37 @@ def build_knowledge_specs(
     """对话式面试：只生成 5 道知识题（项目部分由对话深挖替代）。"""
     specs = _select_fixed_specs(excluded_template_ids or frozenset(), rng)
     return [replace(spec, order=index) for index, spec in enumerate(specs, start=1)]
+
+
+def build_foundation_specs(
+    *,
+    excluded_template_ids: set[str] | None = None,
+    rng: random_module.Random | None = None,
+) -> list[QuestionSpec]:
+    """Build five balanced, technical-only questions for foundation interviews."""
+
+    excluded = excluded_template_ids or set()
+    specs: list[QuestionSpec] = []
+    for order, group in enumerate(FOUNDATION_QUESTION_GROUPS, start=1):
+        fresh_points = [point for point in group if _fresh_pool(point, excluded)[1]]
+        points = fresh_points or list(group)
+        point = rng.choice(points) if rng else points[0]
+        pool, fresh = _fresh_pool(point, excluded)
+        templates = fresh or list(pool)
+        template = rng.choice(templates) if rng else templates[0]
+        specs.append(
+            QuestionSpec(
+                order=order,
+                category=category_for_kp(point),
+                is_anchor=order in {1, 4},
+                prompt=template.prompt,
+                knowledge_point_id=point,
+                rubric_version="alpha-local-v1",
+                signals=template.signals,
+                reference_facts=template.reference_facts,
+                template_id=template.template_id,
+                rubric_weights=template.rubric_weights,
+                criteria_override=template.criteria_override,
+            )
+        )
+    return specs

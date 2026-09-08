@@ -1,4 +1,9 @@
-from app.question_bank import ProjectQuestionData, build_question_specs
+from app.question_bank import (
+    FOUNDATION_QUESTION_GROUPS,
+    ProjectQuestionData,
+    build_foundation_specs,
+    build_question_specs,
+)
 
 
 def test_question_bank_groups_question_categories_and_anchors():
@@ -25,6 +30,23 @@ def test_question_bank_specs_are_versioned_and_ordered():
     assert len({spec.knowledge_point_id for spec in specs}) == 8
     assert all(spec.rubric_version == "alpha-local-v1" for spec in specs)
     assert all(len(spec.signals) >= 2 for spec in specs)
+
+
+def test_foundation_specs_are_balanced_and_exclude_project_questions():
+    import random
+
+    specs = build_foundation_specs(rng=random.Random(7))
+
+    assert len(specs) == 5
+    assert [spec.order for spec in specs] == [1, 2, 3, 4, 5]
+    assert all(
+        not spec.knowledge_point_id.startswith(("project.", "behavioral."))
+        for spec in specs
+    )
+    assert all(
+        spec.knowledge_point_id in group
+        for spec, group in zip(specs, FOUNDATION_QUESTION_GROUPS, strict=True)
+    )
 
 
 def test_custom_project_questions_are_grouped_before_fixed_questions():
