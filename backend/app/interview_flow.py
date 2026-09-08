@@ -21,16 +21,19 @@ from .models import (
     Resume,
     ResumeProject,
     ResumeProjectQuestion,
+    User,
 )
 from .profile_engine import get_or_create_candidate_profile
 from .question_bank import (
     ProjectQuestionData,
     QuestionSpec,
+    build_foundation_specs,
     build_knowledge_specs,
     build_question_specs,
 )
 from .rubrics import build_rubric, rubric_to_dict
 from .schemas import AnswerSubmission
+from .interview_types import interview_type_from_mode
 from .workflow_common import (
     ConflictError,
     InvalidAnswerError,
@@ -61,6 +64,31 @@ def _project_reference_facts(knowledge_point_id: str, project: ResumeProject) ->
         if _truncate_fact(getattr(project, field, ""))
     )
     return facts
+
+
+def _persist_questions(
+    db: Session,
+    session: InterviewSession,
+    specs: list[QuestionSpec],
+) -> list[InterviewQuestion]:
+    questions = []
+    for spec in specs:
+        question = InterviewQuestion(
+            id=str(uuid4()),
+            session_id=session.id,
+            order=spec.order,
+            category=spec.category,
+            is_anchor=spec.is_anchor,
+            prompt=spec.prompt,
+            knowledge_point_id=spec.knowledge_point_id,
+            template_id=spec.template_id or None,
+            rubric_version=spec.rubric_version,
+            signals_json=json.dumps(spec.signals, ensure_ascii=False),
+            rubric_json=json.dumps(rubric_to_dict(build_rubric(spec)), ensure_ascii=False),
+        )
+        db.add(question)
+        questions.append(question)
+    return questions
 
 
 def create_session(
@@ -144,23 +172,7 @@ def create_session(
     )
     db.add(session)
     db.flush()
-    questions = []
-    for spec in question_specs:
-        question = InterviewQuestion(
-            id=str(uuid4()),
-            session_id=session.id,
-            order=spec.order,
-            category=spec.category,
-            is_anchor=spec.is_anchor,
-            prompt=spec.prompt,
-            knowledge_point_id=spec.knowledge_point_id,
-            template_id=spec.template_id or None,
-            rubric_version=spec.rubric_version,
-            signals_json=json.dumps(spec.signals, ensure_ascii=False),
-            rubric_json=json.dumps(rubric_to_dict(build_rubric(spec)), ensure_ascii=False),
-        )
-        db.add(question)
-        questions.append(question)
+    questions = _persist_questions(db, session, question_specs)
     if mode == "dialog":
         db.commit()
         from .dialog_flow import ensure_intro
@@ -182,7 +194,75 @@ def create_session(
         db.commit()
     else:
         db.commit()
-    return {"session_id": session.id, "status": session.status, "questions": questions}
+    return {
+        "session_id": session.id,
+        "status": session.status,
+        "interview_type": interview_type_from_mode(session.mode),
+        "questions": questions,
+    }
+
+
+def create_foundation_session(db: Session) -> dict:
+    """Create a five-question technical session without requiring a resume."""
+
+    user = db.get(User, LOCAL_USER_ID)
+    if user is None:
+        user = User(id=LOCAL_USER_ID)
+        db.add(user)
+        db.flush()
+
+    target = db.scalar(select(InterviewTarget).where(InterviewTarget.user_id == user.id))
+    if target is None:
+        target = InterviewTarget(
+            id=str(uuid4()),
+            user_id=user.id,
+            direction="agent_application_rag",
+            level="one_to_three_years",
+            language="zh_cn",
+            company_type="unspecified",
+            target_title="Agent 应用工程师",
+            jd_text="",
+        )
+        db.add(target)
+        db.flush()
+
+    profile = get_or_create_candidate_profile(
+        db,
+        user_id=user.id,
+        direction=target.direction,
+        level=target.level,
+        target_title=target.target_title,
+    )
+    specs = build_foundation_specs(
+        excluded_template_ids=_recent_template_ids(db, user.id),
+        rng=random.Random(),
+    )
+    session = InterviewSession(
+        id=str(uuid4()),
+        user_id=user.id,
+        resume_project_id=None,
+        target_id=target.id,
+        profile_id=profile.id,
+        status="in_progress",
+        current_question_index=0,
+        total_questions=len(specs),
+        followup_budget_used=0,
+        session_kind="foundation",
+        mode="classic",
+        stage="knowledge",
+        workflow_version=WORKFLOW_VERSION,
+        session_version=1,
+    )
+    db.add(session)
+    db.flush()
+    questions = _persist_questions(db, session, specs)
+    db.commit()
+    return {
+        "session_id": session.id,
+        "status": session.status,
+        "interview_type": "foundation",
+        "questions": questions,
+    }
 
 def _question_response(question: InterviewQuestion) -> dict:
     return {

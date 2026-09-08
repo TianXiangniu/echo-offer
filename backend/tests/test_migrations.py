@@ -18,8 +18,9 @@ def test_existing_database_can_be_opened_again_without_losing_rows(tmp_path):
         assert inspect(upgraded_engine).has_table("assessment_batches")
         assert inspect(upgraded_engine).has_table("interview_graph_event_receipts")
         session_columns = {
-            column["name"]
+            column["name"]: column
             for column in inspect(upgraded_engine).get_columns("interview_sessions")
         }
         assert "current_assessment_batch_id" in session_columns
         assert inspect(upgraded_engine).has_table("candidate_profiles")
+        assert session_columns["resume_project_id"]["nullable"] is True

@@ -148,7 +148,9 @@ class InterviewSession(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    resume_project_id: Mapped[str] = mapped_column(ForeignKey("resume_projects.id"))
+    resume_project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("resume_projects.id"), nullable=True
+    )
     target_id: Mapped[str] = mapped_column(ForeignKey("interview_targets.id"))
     status: Mapped[str] = mapped_column(String(30), default="in_progress")
     current_question_index: Mapped[int] = mapped_column(Integer, default=0)
