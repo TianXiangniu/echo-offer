@@ -215,7 +215,7 @@ export type GraphPlanNode = {
 export type GraphSessionResponse = {
   session_id: string;
   status: string;
-  interview_type: "foundation" | "project";
+  interview_type: "project";
   mode: "graph";
   stage: string;
   current_question: (Question & { answered?: boolean }) | null;
@@ -229,6 +229,7 @@ export type GraphSessionResponse = {
 export type InterviewHistoryItem = {
   session_id: string;
   status: string;
+  interview_type: "foundation" | "project";
   profile_id: string | null;
   project_name: string | null;
   direction: string | null;
@@ -672,6 +673,7 @@ export function assessSession(sessionId: string) {
 
 export type Report = {
   session_id: string;
+  interview_type: "foundation" | "project";
   completion: { completed: number; total: number };
   score_100: number | null;
   coverage: number;

@@ -44,3 +44,12 @@ def test_foundation_api_exposes_interview_type(client):
     view = client.get(f"/api/sessions/{body['session_id']}")
     assert view.status_code == 200
     assert view.json()["interview_type"] == "foundation"
+
+    history = client.get("/api/interviews/history")
+    assert history.status_code == 200
+    item = next(entry for entry in history.json() if entry["session_id"] == body["session_id"])
+    assert item["interview_type"] == "foundation"
+
+    report = client.get(f"/api/sessions/{body['session_id']}/report")
+    assert report.status_code == 200
+    assert report.json()["interview_type"] == "foundation"

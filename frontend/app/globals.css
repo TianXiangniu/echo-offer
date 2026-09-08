@@ -562,6 +562,7 @@ body { background: var(--color-mint-50); color: var(--color-ink); font-family: v
 .mint-complete-mark { display: grid; width: 56px; height: 56px; margin: 0 auto 24px; place-items: center; border-radius: 50%; background: var(--color-mint-100); color: var(--color-forest-soft); font-size: 24px; }
 .mint-complete-title { margin: 0; color: var(--color-forest); font-family: var(--font-display); font-size: clamp(36px, 6vw, 62px); letter-spacing: -.07em; }
 .mint-report-intro { max-width: 760px; padding: 78px 0 38px; }
+.mint-report-mode, .mint-history-mode { margin: 9px 0 0; color: var(--color-forest-soft); font-size: 13px; font-weight: 700; }
 .mint-report-intro .mint-title { font-size: clamp(40px, 6.5vw, 72px); }
 .mint-report-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 25px; }
 .mint-summary { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 18px; }

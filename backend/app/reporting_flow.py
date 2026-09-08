@@ -38,6 +38,7 @@ from .profile_insights import (
     verifiable_count,
 )
 from .workflow_common import NotFoundError, _get_active_session, calculate_score_100, utc_now
+from .interview_types import interview_type_from_mode
 
 def _build_report_payload(
     db: Session,
@@ -195,6 +196,7 @@ def _build_report_payload(
     # 完整问答回看：当时的题目、完整回答、追问与回答，按题号排列
     return {
         "session_id": session_id,
+        "interview_type": interview_type_from_mode(session.mode),
         "completion": {"completed": completed, "total": len(questions)},
         "coverage": round(completed / len(questions), 3) if questions else 0.0,
         "anchor_coverage": {"answered": anchor_answered, "total": len(anchor_ids)},
@@ -337,8 +339,9 @@ def get_persisted_report(db: Session, session_id: str) -> dict | None:
 
 
 def get_report(db: Session, session_id: str) -> dict:
-    _get_active_session(db, session_id)
+    session = _get_active_session(db, session_id)
     payload = get_persisted_report(db, session_id) or _build_report_payload(db, session_id)
+    payload.setdefault("interview_type", interview_type_from_mode(session.mode))
     # transcript 实时构建：存量报告（存库 JSON）同样能回看完整问答
     payload["transcript"] = _build_transcript(db, session_id)
     return payload
@@ -382,12 +385,13 @@ def list_interview_history(db: Session) -> list[dict]:
             .order_by(OperationJob.created_at.desc(), OperationJob.id.desc())
         )
         target = db.get(InterviewTarget, session.target_id)
-        project = db.get(ResumeProject, session.resume_project_id)
+        project = db.get(ResumeProject, session.resume_project_id) if session.resume_project_id else None
         report_payload = json.loads(report.report_json) if report else None
         history.append(
             {
                 "session_id": session.id,
                 "status": session.status,
+                "interview_type": interview_type_from_mode(session.mode),
                 "profile_id": session.profile_id,
                 "project_name": project.project_name if project else None,
                 "direction": target.direction if target else None,

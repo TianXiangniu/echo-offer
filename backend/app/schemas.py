@@ -390,6 +390,7 @@ class SessionView(BaseModel):
 
 class ReportResponse(BaseModel):
     session_id: str
+    interview_type: Literal["foundation", "project"]
     completion: dict[str, int]
     score_100: int | None = None
     coverage: float
@@ -408,6 +409,7 @@ class ReportResponse(BaseModel):
 class InterviewHistoryItem(BaseModel):
     session_id: str
     status: str
+    interview_type: Literal["foundation", "project"]
     profile_id: str | None = None
     project_name: str | None = None
     direction: str | None = None
