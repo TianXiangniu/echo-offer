@@ -2,7 +2,7 @@ export type InterviewType = "foundation" | "project";
 
 const entries = {
   foundation: {
-    path: "/interview",
+    path: "/",
     title: "大模型基础面试",
     description: "从题库抽取技术问题，练习模型、Agent、RAG 和工程基础。",
     action: "开始基础面试",

@@ -5,8 +5,8 @@ import {
   interviewTypeLabel,
 } from "./interview-type.ts";
 
-if (interviewEntry("foundation").path !== "/interview") {
-  throw new Error("foundation interviews should use the shared interview route");
+if (interviewEntry("foundation").path !== "/") {
+  throw new Error("foundation interviews should return to the mode chooser");
 }
 
 if (interviewEntry("project").path !== "/project") {
