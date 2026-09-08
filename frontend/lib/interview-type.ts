@@ -18,3 +18,15 @@ const entries = {
 export function interviewEntry(type: InterviewType) {
   return entries[type];
 }
+
+export function interviewEntryPath(type: InterviewType) {
+  return interviewEntry(type).path;
+}
+
+export function interviewTypeLabel(type: InterviewType) {
+  return interviewEntry(type).title;
+}
+
+export function interviewRecordTitle(type: InterviewType, projectName: string | null) {
+  return type === "foundation" ? interviewTypeLabel(type) : projectName || interviewTypeLabel(type);
+}

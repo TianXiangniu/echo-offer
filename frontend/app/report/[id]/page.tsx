@@ -8,6 +8,7 @@ import { isAssessmentRetryable } from "@/lib/assessment-flow";
 import { assessmentFailureMessage, hasUsableAssessmentResult } from "@/lib/assessment-copy";
 import { brandCopy, reportCopy, statusCopy } from "@/lib/ui-copy";
 import { rubricGrade } from "@/lib/format";
+import { interviewEntryPath, interviewTypeLabel } from "@/lib/interview-type";
 
 const levelLabels: Record<string, string> = {
   "0": "没有答到关键点",
@@ -153,10 +154,10 @@ export default function ReportPage() {
 
         <section className="mint-report-intro" aria-label="本场结果介绍">
           <p className="mint-overline">{reportCopy.content}</p>
-          <p className="mint-report-mode">{report.interview_type === "foundation" ? "大模型基础面试" : "项目经历面试"}</p>
+          <p className="mint-report-mode">{interviewTypeLabel(report.interview_type)}</p>
           <h1 className="mint-title">先看看答得好的地方，<br /><em>再补上缺的部分。</em></h1>
           <p className="mint-lead">这份结果只根据本场已经保存的回答整理。先看具体回答，再决定下一次怎么练。</p>
-          <div className="mint-report-actions"><button type="button" onClick={() => router.push("/")} className="mint-button mint-button--primary">再做一场</button></div>
+          <div className="mint-report-actions"><button type="button" onClick={() => router.push(interviewEntryPath(report.interview_type))} className="mint-button mint-button--primary">再做一场</button></div>
         </section>
 
         <section className="mint-summary" aria-label="整体情况">

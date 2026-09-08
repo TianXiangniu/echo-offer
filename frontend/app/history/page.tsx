@@ -8,6 +8,7 @@ import {
   InterviewHistoryItem,
 } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { interviewRecordTitle, interviewTypeLabel } from "@/lib/interview-type";
 
 type HistoryState = {
   label: string;
@@ -143,8 +144,8 @@ export default function InterviewHistoryPage() {
                     <div className="mint-history-card-top">
                       <div>
                         <p className="mint-history-date">{formatDateTime(item.created_at)}</p>
-                        <p className="mint-history-mode">{item.interview_type === "foundation" ? "大模型基础面试" : "项目经历面试"}</p>
-                        <h2 className="mint-history-card-title">{item.interview_type === "foundation" ? "大模型基础面试" : item.project_name || "未命名项目"}</h2>
+                        <p className="mint-history-mode">{interviewTypeLabel(item.interview_type)}</p>
+                        <h2 className="mint-history-card-title">{interviewRecordTitle(item.interview_type, item.project_name)}</h2>
                         <p className="mint-history-target">{item.target_title || "Agent 应用工程师"}</p>
                       </div>
                       <span className={`mint-status-pill mint-status-pill--${state.tone}`}>{state.label}</span>
