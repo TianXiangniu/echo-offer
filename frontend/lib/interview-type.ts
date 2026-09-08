@@ -27,6 +27,10 @@ export function interviewTypeLabel(type: InterviewType) {
   return interviewEntry(type).title;
 }
 
+export function interviewStageLabel(type: InterviewType, completed: number, total: number) {
+  return `${type === "foundation" ? "基础面试" : "项目面试"} · 已答 ${completed}/${total}`;
+}
+
 export function interviewRecordTitle(type: InterviewType, projectName: string | null) {
   return type === "foundation" ? interviewTypeLabel(type) : projectName || interviewTypeLabel(type);
 }

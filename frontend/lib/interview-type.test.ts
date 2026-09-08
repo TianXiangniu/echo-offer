@@ -2,6 +2,7 @@ import {
   interviewEntry,
   interviewEntryPath,
   interviewRecordTitle,
+  interviewStageLabel,
   interviewTypeLabel,
 } from "./interview-type.ts";
 
@@ -31,6 +32,14 @@ if (interviewRecordTitle("project", "DeepResearch") !== "DeepResearch") {
 
 if (interviewTypeLabel("project") !== "项目经历面试") {
   throw new Error("project mode label should be conversational");
+}
+
+if (interviewStageLabel("foundation", 2, 5) !== "基础面试 · 已答 2/5") {
+  throw new Error("foundation stage label should show progress");
+}
+
+if (interviewStageLabel("project", 2, 6) !== "项目面试 · 已答 2/6") {
+  throw new Error("project stage label should show progress");
 }
 
 console.log("interview type tests passed");

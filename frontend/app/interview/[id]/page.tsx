@@ -8,6 +8,7 @@ import { ApiError, API_BASE_URL, assessSession, AssessmentBatchResponse, decideF
 import type { AssessmentStage } from "@/lib/assessment-flow";
 import { assessmentFailureMessage, hasUsableAssessmentResult } from "@/lib/assessment-copy";
 import { GraphSessionView, normalizeGraphState } from "@/lib/interview-graph";
+import { interviewStageLabel } from "@/lib/interview-type";
 import { brandCopy, interviewCopy, statusCopy } from "@/lib/ui-copy";
 
 function newSubmissionId() {
@@ -307,9 +308,9 @@ export default function InterviewPage() {
     isDialog
       ? ({ intro: "自我介绍", project_dialog: "项目深挖", knowledge: "知识环节", wrap_up: "反问环节", completed: "面试完成" }[stage] ?? "")
       : isGraph
-        ? `上下文面试 · 已答 ${completedCount}/${totalCount}`
+        ? interviewStageLabel("project", completedCount, totalCount)
       : isFoundation
-        ? `基础题 · 已答 ${completedCount}/${totalCount}`
+        ? interviewStageLabel("foundation", completedCount, totalCount)
         : `知识环节 · 已答 ${completedCount}/${totalCount}`;
   const showTyping = busy && (inputMode === "dialog" || stage === "project_dialog");
 
