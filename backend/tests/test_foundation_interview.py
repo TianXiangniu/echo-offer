@@ -31,3 +31,16 @@ def test_foundation_session_does_not_require_resume(db):
     assert session.session_kind == "foundation"
     assert session.profile_id is not None
     assert len(result["questions"]) == 5
+
+
+def test_foundation_api_exposes_interview_type(client):
+    created = client.post("/api/sessions/foundation")
+
+    assert created.status_code == 200
+    body = created.json()
+    assert body["interview_type"] == "foundation"
+    assert len(body["questions"]) == 5
+
+    view = client.get(f"/api/sessions/{body['session_id']}")
+    assert view.status_code == 200
+    assert view.json()["interview_type"] == "foundation"

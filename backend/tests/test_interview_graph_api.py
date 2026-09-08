@@ -95,6 +95,7 @@ def _graph_session(client: TestClient) -> str:
         json={"profile_id": response.json()["profile_id"], "mode": "graph"},
     )
     assert created.status_code == 200
+    assert created.json()["interview_type"] == "project"
     assert created.json()["questions"] == []
     return created.json()["session_id"]
 

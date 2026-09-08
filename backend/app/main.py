@@ -42,6 +42,8 @@ from .schemas import (
     AssessmentBatchResponse,
     AgentProjectAnalysisRequest,
     AgentProjectAnalysisResponseEnvelope,
+    ProjectCandidatesResponse,
+    ProjectCandidatesRequest,
     FollowupAnswerResponse,
     FollowupAnswerSubmission,
     DialogAnswerSubmission,
@@ -70,7 +72,12 @@ from .schemas import (
     SessionView,
     GraphAnswerSubmission,
 )
-from .interview_flow import create_session, get_session_view, submit_answer
+from .interview_flow import (
+    create_foundation_session,
+    create_session,
+    get_session_view,
+    submit_answer,
+)
 from .interview_graph_projection import build_projected_interview_graph
 from .interview_graph_api import graph_events, graph_state, resume_graph, start_graph
 from .interview_graph_runtime import close_checkpointer, create_checkpointer
@@ -96,6 +103,7 @@ from .reporting_flow import (
 )
 from .resume_intake import (
     analyze_resume_project,
+    analyze_resume_project_candidates,
     create_profile,
     parse_and_store_resume,
     stream_resume_project_analysis,
@@ -320,6 +328,18 @@ def create_app(
         )
 
     @app.post(
+        "/api/resumes/{resume_id}/agent-project-candidates",
+        response_model=ProjectCandidatesResponse,
+    )
+    def analyze_project_candidates(
+        resume_id: str,
+        payload: ProjectCandidatesRequest,
+        db: Session = Depends(get_db),
+    ):
+        with observed_model_call(db):
+            return analyze_resume_project_candidates(db, app.state.project_analysis_provider, resume_id, payload.resume_text)
+
+    @app.post(
         "/api/resumes/{resume_id}/agent-project-analysis",
         response_model=AgentProjectAnalysisResponseEnvelope,
     )
@@ -329,7 +349,7 @@ def create_app(
         db: Session = Depends(get_db),
     ):
         with observed_model_call(db):
-            return analyze_resume_project(db, app.state.project_analysis_provider, resume_id, payload.resume_text)
+            return analyze_resume_project(db, app.state.project_analysis_provider, resume_id, payload.resume_text, payload.selected_project_name)
 
     @app.post("/api/resumes/{resume_id}/agent-project-analysis/stream")
     async def analyze_project_stream(
@@ -343,6 +363,7 @@ def create_app(
                 app.state.project_analysis_provider,
                 resume_id,
                 payload.resume_text,
+                payload.selected_project_name,
             ),
             media_type="text/event-stream",
             headers={
@@ -354,6 +375,10 @@ def create_app(
     @app.post("/api/sessions", response_model=SessionCreateResponse)
     def session(payload: SessionCreate, db: Session = Depends(get_db)):
         return create_session(db, payload.profile_id, mode=payload.mode)
+
+    @app.post("/api/sessions/foundation", response_model=SessionCreateResponse)
+    def foundation_session(db: Session = Depends(get_db)):
+        return create_foundation_session(db)
 
     @app.post("/api/sessions/{session_id}/graph/start")
     def graph_start(session_id: str, db: Session = Depends(get_db)):

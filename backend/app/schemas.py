@@ -30,6 +30,11 @@ ProjectFieldName = Literal[
 
 class AgentProjectAnalysisRequest(BaseModel):
     resume_text: str = Field(min_length=1, max_length=100_000)
+    selected_project_name: str = Field(default="", max_length=200)
+
+
+class ProjectCandidatesRequest(BaseModel):
+    resume_text: str = Field(min_length=1, max_length=100_000)
 
 
 class ModelPricePayload(BaseModel):
@@ -100,6 +105,25 @@ class ProjectAnalysisDetails(BaseModel):
 class ProjectAnalysisEvidence(BaseModel):
     field: ProjectFieldName
     quote: str = Field(min_length=1, max_length=2000)
+
+
+class ProjectCandidateEvidence(BaseModel):
+    field: str = Field(min_length=1, max_length=120)
+    quote: str = Field(min_length=1, max_length=2000)
+
+
+class ProjectCandidate(BaseModel):
+    project_name: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=1000)
+    tech_stack: str = Field(default="", max_length=1000)
+    responsibilities: str = Field(default="", max_length=1000)
+    selection_reason: str = Field(min_length=1, max_length=1000)
+    confidence: float = Field(ge=0, le=1)
+    evidence: list[ProjectCandidateEvidence] = Field(min_length=1, max_length=8)
+
+
+class ProjectCandidatesResponse(BaseModel):
+    candidates: list[ProjectCandidate] = Field(min_length=1, max_length=3)
 
 
 ProjectFactStatus = Literal[
@@ -226,6 +250,7 @@ class QuestionResponse(BaseModel):
 class SessionCreateResponse(BaseModel):
     session_id: str
     status: str
+    interview_type: Literal["foundation", "project"]
     questions: list[QuestionResponse]
 
 
@@ -353,6 +378,7 @@ class OpenDrillRequest(BaseModel):
 class SessionView(BaseModel):
     session_id: str
     status: str
+    interview_type: Literal["foundation", "project"]
     mode: str = "classic"
     stage: str = "knowledge"
     # dict 而非 QuestionResponse：追问/反馈状态要随当前题下发

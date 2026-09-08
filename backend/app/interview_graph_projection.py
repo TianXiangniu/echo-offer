@@ -404,6 +404,7 @@ def graph_session_view(
     return {
         "session_id": session.id,
         "status": status,
+        "interview_type": "project",
         "mode": "graph",
         "stage": "graph",
         "degraded": degraded,

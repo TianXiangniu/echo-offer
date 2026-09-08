@@ -323,6 +323,7 @@ def get_session_view(
     return {
         "session_id": session.id,
         "status": session.status,
+        "interview_type": interview_type_from_mode(session.mode),
         "mode": session.mode,
         "stage": session.stage,
         # 当前题同样要带追问/反馈状态：前端面试页从 current_question 渲染追问卡
