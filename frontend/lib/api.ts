@@ -147,7 +147,7 @@ export type AgentAnalysisStreamEvent =
 export type Question = {
   id: string;
   order: number;
-  category: "project" | "agent" | "reliability";
+  category: string;
   is_anchor: boolean;
   prompt: string;
   knowledge_point_id: string;
@@ -157,6 +157,7 @@ export type Question = {
 export type SessionResponse = {
   session_id: string;
   status: string;
+  interview_type: "foundation" | "project";
   questions: Question[];
 };
 
@@ -185,6 +186,7 @@ export type DialogMessage = {
 export type SessionView = {
   session_id: string;
   status: string;
+  interview_type: "foundation" | "project";
   mode: string;
   stage: string;
   current_question: (Question & {
@@ -213,6 +215,7 @@ export type GraphPlanNode = {
 export type GraphSessionResponse = {
   session_id: string;
   status: string;
+  interview_type: "foundation" | "project";
   mode: "graph";
   stage: string;
   current_question: (Question & { answered?: boolean }) | null;
@@ -597,6 +600,10 @@ export function createSession(profileId: string, mode: "classic" | "dialog" | "g
     method: "POST",
     body: JSON.stringify({ profile_id: profileId, mode }),
   });
+}
+
+export function createFoundationSession() {
+  return request<SessionResponse>("/api/sessions/foundation", { method: "POST" });
 }
 
 export function startGraphSession(sessionId: string) {

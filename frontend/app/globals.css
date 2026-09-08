@@ -480,6 +480,21 @@ body { background: var(--color-mint-50); color: var(--color-ink); font-family: v
 .mint-hero-card-copy { max-width: 210px; margin: 10px 0 0; color: var(--color-muted); font-size: 13px; line-height: 1.7; }
 .mint-card-spark { position: absolute; right: 34px; bottom: 40px; z-index: 1; color: var(--color-coral); font-size: 34px; }
 .mint-section { margin-top: 54px; }
+.mint-home-hero { padding-bottom: 48px; }
+.mint-mode-section { margin: 10px 0 0; }
+.mint-mode-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.mint-mode-card { display: grid; gap: 16px; min-height: 360px; padding: 27px; }
+.mint-mode-card--accent { background: var(--color-forest); border-color: var(--color-forest); color: var(--color-mint-50); }
+.mint-mode-card--accent .mint-mode-title { color: var(--color-mint-50); }
+.mint-mode-card--accent .mint-mode-copy, .mint-mode-card--accent .mint-mode-list { color: var(--color-mint-200); }
+.mint-mode-card--accent .mint-chip { background: rgb(228 243 235 / 14%); color: var(--color-mint-200); }
+.mint-mode-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mint-mode-number { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 11px; background: var(--color-mint-100); color: var(--color-forest); font-family: var(--font-display); font-size: 18px; font-weight: 700; }
+.mint-mode-card--accent .mint-mode-number { background: rgb(228 243 235 / 15%); color: var(--color-mint-50); }
+.mint-mode-title { margin: 5px 0 0; color: var(--color-forest); font-family: var(--font-display); font-size: 27px; letter-spacing: -.05em; }
+.mint-mode-copy { margin: 0; color: var(--color-muted); font-size: 14px; line-height: 1.75; }
+.mint-mode-list { display: grid; gap: 8px; margin: 0; padding-left: 20px; color: var(--color-muted); font-size: 13px; line-height: 1.6; }
+.mint-mode-action { align-self: end; justify-self: start; margin-top: 8px; }
 .mint-section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 22px; margin-bottom: 17px; }
 .mint-section-heading-main { display: flex; align-items: flex-start; gap: 14px; }
 .mint-section-index { color: var(--color-coral); font-family: var(--font-display); font-size: 18px; font-weight: 700; line-height: 1; }
@@ -598,6 +613,7 @@ body { background: var(--color-mint-50); color: var(--color-ink); font-family: v
   .mint-field-grid, .mint-question-edit-grid, .mint-summary { grid-template-columns: 1fr; }
   .mint-field--wide { grid-column: auto; }
   .mint-analysis-summary, .mint-actions, .mint-answer-actions { align-items: flex-start; flex-direction: column; }
+  .mint-mode-grid { grid-template-columns: 1fr; }
   .mint-interview-top { align-items: flex-start; flex-direction: column; }
   .mint-interview-grid { grid-template-columns: 1fr; gap: 30px; padding: 52px 0 35px; }
   .mint-answer-card { padding: 20px; }
