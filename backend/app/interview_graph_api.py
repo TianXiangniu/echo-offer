@@ -48,10 +48,10 @@ def build_graph_context(
         "project_id": project.id,
         "name": _compact_context_text(project.project_name, 200),
         "summary": _compact_context_text(project.background_goal, 1000),
-        **{
-            public_name: _compact_context_text(getattr(project, attribute, ""), 1000)
-            for public_name, attribute in _PROJECT_CONTEXT_FIELDS
-        },
+    }
+    project_values = {
+        attribute: _compact_context_text(getattr(project, attribute, ""), 1000)
+        for _, attribute in _PROJECT_CONTEXT_FIELDS
     }
     facts: list[dict[str, str]] = []
     seen_ids: set[str] = set()
@@ -86,7 +86,7 @@ def build_graph_context(
 
     if not facts:
         for public_name, attribute in _PROJECT_CONTEXT_FIELDS:
-            value = project_context.get(public_name, "")
+            value = project_values.get(attribute, "")
             if value:
                 facts.append(
                     {
