@@ -234,6 +234,9 @@ def resume_graph(
         db=db,
         events=events,
     )
+    checkpoint = graph.get_state(graph_config(session.id)).values
+    if checkpoint.get("status") == "completed":
+        return _public_state(db, session.id, graph)
     _invoke_and_project(
         db,
         lambda: graph.invoke(
