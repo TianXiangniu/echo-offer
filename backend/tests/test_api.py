@@ -31,6 +31,20 @@ PROJECT = {
 }
 
 
+def test_cors_allows_both_localhost_aliases(client):
+    for origin in ("http://localhost:3000", "http://127.0.0.1:3000"):
+        response = client.options(
+            "/api/interviews/history",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+
+
 class StaticProjectAnalysisProvider:
     def __init__(self, result):
         self.result = result
