@@ -52,10 +52,18 @@ class StableGraphAgents:
         )
 
 
+class NoNetworkAssessmentProvider:
+    evaluator = "test-no-network"
+
+    def assess_batch(self, cases):
+        return ()
+
+
 def graph_client(tmp_path, agents=None):
     app = create_app(
         f"sqlite:///{tmp_path / 'graph-e2e.db'}",
         upload_root=tmp_path / "uploads",
+        assessment_provider=NoNetworkAssessmentProvider(),
     )
     app.state.interview_graph_agents = agents or StableGraphAgents()
     client = TestClient(app)
@@ -191,6 +199,7 @@ def test_completed_resume_is_read_only_after_projection_failure(tmp_path, monkey
 
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
+    assert response.json()["assessment"]["status"] == "pending"
     assert count_answers(client, session_id) == before == 5
 
 

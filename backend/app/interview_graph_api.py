@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 
 from langgraph.types import Command
 from sqlalchemy import select
@@ -154,6 +154,28 @@ def _public_state(db: Session, session_id: str, graph, *, repair: bool = True) -
     return get_session_view(db, session_id, state)
 
 
+def _attach_completion_result(
+    state: dict,
+    on_completed: Callable[[], Mapping] | None,
+) -> dict:
+    if on_completed is not None and state.get("status") == "completed":
+        try:
+            state["assessment"] = dict(on_completed())
+        except ConflictError as error:
+            state["assessment"] = {
+                "status": "pending",
+                "batch_id": None,
+                "job_id": None,
+                "job_status": None,
+                "job_error_code": "assessment_incomplete",
+                "job_error_message": str(error),
+                "evaluated_count": 0,
+                "total_count": 0,
+                "assessments": [],
+            }
+    return state
+
+
 def _build_graph(*, graph_builder, agents, checkpointer, db: Session, events: list):
     return graph_builder(
         agents,
@@ -175,7 +197,15 @@ def _invoke_and_project(db: Session, invoke, events: list[dict]) -> None:
         raise
 
 
-def start_graph(db: Session, session_id: str, *, graph_builder, agents, checkpointer) -> dict:
+def start_graph(
+    db: Session,
+    session_id: str,
+    *,
+    graph_builder,
+    agents,
+    checkpointer,
+    on_completed: Callable[[], Mapping] | None = None,
+) -> dict:
     session, project = _graph_session(db, session_id)
     analysis = db.get(ResumeProjectAnalysis, project.analysis_id) if project.analysis_id else None
     events: list[dict] = []
@@ -196,7 +226,10 @@ def start_graph(db: Session, session_id: str, *, graph_builder, agents, checkpoi
             ),
             events,
         )
-    return _public_state(db, session.id, graph)
+    return _attach_completion_result(
+        _public_state(db, session.id, graph),
+        on_completed,
+    )
 
 
 def resume_graph(
@@ -207,6 +240,7 @@ def resume_graph(
     graph_builder,
     agents,
     checkpointer,
+    on_completed: Callable[[], Mapping] | None = None,
 ) -> dict:
     session, _ = _graph_session(db, session_id)
     existing = db.scalar(
@@ -225,7 +259,10 @@ def resume_graph(
             db=db,
             events=[],
         )
-        return _public_state(db, session.id, graph)
+        return _attach_completion_result(
+            _public_state(db, session.id, graph),
+            on_completed,
+        )
 
     events: list[dict] = []
     graph = _build_graph(
@@ -237,7 +274,10 @@ def resume_graph(
     )
     checkpoint = graph.get_state(graph_config(session.id)).values
     if checkpoint.get("status") == "completed":
-        return _public_state(db, session.id, graph, repair=False)
+        return _attach_completion_result(
+            _public_state(db, session.id, graph, repair=False),
+            on_completed,
+        )
     _invoke_and_project(
         db,
         lambda: graph.invoke(
@@ -251,7 +291,10 @@ def resume_graph(
         ),
         events,
     )
-    return _public_state(db, session.id, graph)
+    return _attach_completion_result(
+        _public_state(db, session.id, graph),
+        on_completed,
+    )
 
 
 def graph_state(db: Session, session_id: str, *, graph_builder, agents, checkpointer) -> dict:

@@ -357,13 +357,17 @@ def create_app(
 
     @app.post("/api/sessions/{session_id}/graph/start")
     def graph_start(session_id: str, db: Session = Depends(get_db)):
-        return start_graph(
-            db,
-            session_id,
-            graph_builder=app.state.interview_graph_builder,
-            agents=app.state.interview_graph_agents,
-            checkpointer=app.state.interview_graph_checkpointer,
-        )
+        with observed_model_call(db, session_id):
+            return start_graph(
+                db,
+                session_id,
+                graph_builder=app.state.interview_graph_builder,
+                agents=app.state.interview_graph_agents,
+                checkpointer=app.state.interview_graph_checkpointer,
+                on_completed=lambda: assess_session(
+                    db, session_id, app.state.assessment_provider
+                ),
+            )
 
     @app.post("/api/sessions/{session_id}/graph/resume")
     def graph_resume(
@@ -371,14 +375,18 @@ def create_app(
         payload: GraphAnswerSubmission,
         db: Session = Depends(get_db),
     ):
-        return resume_graph(
-            db,
-            session_id,
-            payload,
-            graph_builder=app.state.interview_graph_builder,
-            agents=app.state.interview_graph_agents,
-            checkpointer=app.state.interview_graph_checkpointer,
-        )
+        with observed_model_call(db, session_id):
+            return resume_graph(
+                db,
+                session_id,
+                payload,
+                graph_builder=app.state.interview_graph_builder,
+                agents=app.state.interview_graph_agents,
+                checkpointer=app.state.interview_graph_checkpointer,
+                on_completed=lambda: assess_session(
+                    db, session_id, app.state.assessment_provider
+                ),
+            )
 
     @app.get("/api/sessions/{session_id}/graph/state")
     def graph_state_view(session_id: str, db: Session = Depends(get_db)):
