@@ -325,6 +325,12 @@ export default function InterviewPage() {
         </section>
       )}
 
+      {isGraph && graphSession?.degraded && (
+        <div className="mint-graph-degraded" role="status">
+          模型暂不可用，已切换保底问题；回答仍会保存。
+        </div>
+      )}
+
       {error && <div className="mint-alert" role="alert">{error}</div>}
 
       <div className="mint-chat-scroll" ref={chatRef}>

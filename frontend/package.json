@@ -6,7 +6,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --experimental-strip-types lib/api.sse.test.ts && node --experimental-strip-types lib/assessment-types.test.ts && node --experimental-strip-types lib/project-supplement.test.ts && node --experimental-strip-types lib/home-flow.test.ts && node --experimental-strip-types lib/interview-graph.test.ts"
+    "test": "node --experimental-strip-types lib/api.sse.test.ts && node --experimental-strip-types lib/assessment-types.test.ts && node --experimental-strip-types lib/project-supplement.test.ts && node --experimental-strip-types lib/home-flow.test.ts && node --experimental-strip-types lib/interview-graph.test.ts && node --experimental-strip-types lib/interview-graph-recovery.test.ts"
   },
   "dependencies": {
     "next": "^15.4.0",

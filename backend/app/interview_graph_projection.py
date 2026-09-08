@@ -394,11 +394,19 @@ def graph_session_view(
             else None
         )
     status = str(state.get("status") or session.status)
+    degraded = any(
+        isinstance(event, Mapping)
+        and event.get("event_kind") == "state_updated"
+        and isinstance(event.get("payload"), Mapping)
+        and event["payload"].get("degraded") is True
+        for event in state.get("graph_events", [])
+    )
     return {
         "session_id": session.id,
         "status": status,
         "mode": "graph",
         "stage": "graph",
+        "degraded": degraded,
         "current_question": current_question,
         "questions": [
             {

@@ -27,6 +27,7 @@ export type GraphSessionView = {
   nodes: GraphPlanNodeView[];
   progress: { completed: number; total: number };
   timeline: DialogMessage[];
+  degraded: boolean;
   canAnswer: boolean;
 };
 
@@ -39,6 +40,7 @@ type GraphStateInput = {
   nodes?: Array<Partial<GraphPlanNodeView> & { id?: string }>;
   progress?: Partial<GraphSessionView["progress"]>;
   timeline?: DialogMessage[];
+  degraded?: boolean;
 };
 
 const NODE_LABELS: Record<string, string> = {
@@ -76,6 +78,7 @@ export function normalizeGraphState(state: GraphStateInput): GraphSessionView {
     nodes,
     progress: { completed, total },
     timeline: state.timeline || [],
+    degraded: state.degraded === true,
     canAnswer: status === "awaiting_answer" && Boolean(currentQuestion),
   };
 }

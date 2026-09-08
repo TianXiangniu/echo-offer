@@ -887,6 +887,7 @@ body { background: var(--color-mint-50); color: var(--color-ink); font-family: v
 .mint-graph-map-head h2 { margin: 4px 0 0; font: 600 17px/1.35 var(--font-body); letter-spacing: -.02em; }
 .mint-graph-map-head > span { color: #8fa0b3; font: 12px var(--font-mono); }
 .mint-graph-kicker { margin: 0; color: #6fbf95; font: 10px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; }
+.mint-graph-degraded { max-width: 980px; margin: 0 auto 12px; padding: 10px 24px; color: #e8c28a; font-size: 12px; }
 .mint-graph-nodes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; }
 .mint-graph-node { position: relative; display: grid; gap: 5px; min-height: 76px; padding: 11px 10px; border: 1px solid #2a3646; border-radius: 12px; background: rgb(26 35 48 / 70%); color: #8fa0b3; }
 .mint-graph-node::after { position: absolute; top: 20px; right: -8px; width: 8px; border-top: 1px solid #35465b; content: ""; }
